@@ -59,7 +59,7 @@
         "test": "vendor/bin/phpunit",
         "phpstan": "vendor/bin/phpstan analyse --memory-limit=1G",
         "cs-fix": "vendor/bin/php-cs-fixer fix",
-        "deptrac": "vendor/bin/deptrac analyse --config-file=deptrac.yaml",
+        "deptrac": "vendor/bin/deptrac analyse --config-file=deptrac.yaml --report-uncovered --fail-on-uncovered",
         "cs-check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
         "qa": [
             "@cs-check",
@@ -72,7 +72,7 @@
         "test": "Run the PHPUnit suite",
         "phpstan": "Static analysis at level 8",
         "cs-fix": "Apply PSR-12 formatting with php-cs-fixer",
-        "deptrac": "Check the bounded-context dependency rule",
+        "deptrac": "Check the bounded-context dependency rule; an unlayered dependency fails too",
         "cs-check": "Verify PSR-12 formatting without writing files",
         "qa": "Run all four quality gates in order: cs-check, phpstan, deptrac, test"
     },

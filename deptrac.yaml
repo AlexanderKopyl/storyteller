@@ -4,6 +4,11 @@ deptrac:
   paths:
     - ./src
 
+  # PHP built-in classes are never reported as uncovered (this is deptrac's default;
+  # it is spelled out because `--fail-on-uncovered` in the `deptrac` composer script
+  # depends on it: without it every `DateTimeImmutable` in the Engine would fail).
+  ignore_uncovered_internal_classes: true
+
   # analyser.types is deliberately NOT set: deptrac's default emitter set already covers
   # use / class / new / attribute / parameter / return, which is what the rule needs.
 
@@ -35,38 +40,40 @@ deptrac:
 
     # D4: vendor layer. Without it, `use Doctrine\ORM\EntityManagerInterface;` inside
     # src/Engine belongs to no layer and deptrac passes silently.
+    #
+    # EXHAUSTIVE BY CONSTRUCTION - do not replace this with a package list.
+    # The previous shape was a `composer` collector naming ~25 packages. That collector
+    # resolves only the namespaces of the packages it is handed, so every installed
+    # package nobody remembered to list (symfony/routing, symfony/string, the four
+    # symfony/contracts, doctrine/event-manager, psr/cache, ...) landed in NO layer and
+    # was reported as "Uncovered", which the gate did not fail on. The list went stale
+    # the moment `composer require` added a package - which is exactly what happened.
+    #
+    # This definition instead says: a token is Framework if it is a class-like that is
+    # (a) not ours and (b) not a PHP built-in. There is nothing to keep in sync, so it
+    # cannot rot when a dependency is added, removed or upgraded.
+    #
+    # Cost, stated plainly: the layer can no longer distinguish one vendor package from
+    # another, so a future narrow grant (e.g. letting Shared use symfony/uid alone - see
+    # review m2) needs its own layer with a `composer` collector PLUS a matching
+    # `must_not` entry here, so the two layers stay disjoint. That is a deliberate,
+    # reviewed change, which is precisely what plan decision P3 asks for.
     - name: Framework
       collectors:
-        - type: composer
-          composerPath: ./composer.json
-          composerLockPath: ./composer.lock
-          packages:
-            - symfony/framework-bundle
-            - symfony/console
-            - symfony/dotenv
-            - symfony/runtime
-            - symfony/serializer
-            - symfony/validator
-            - symfony/uid
-            - symfony/yaml
-            - symfony/monolog-bundle
-            - symfony/http-foundation
-            - symfony/http-kernel
-            - symfony/dependency-injection
-            - symfony/config
-            - symfony/event-dispatcher
-            - symfony/filesystem
-            - symfony/finder
-            - doctrine/orm
-            - doctrine/dbal
-            - doctrine/persistence
-            - doctrine/collections
-            - doctrine/doctrine-bundle
-            - doctrine/doctrine-migrations-bundle
-            - doctrine/migrations
-            - monolog/monolog
-            - psr/log
-            - psr/container
+        - type: bool
+          must:
+            # Every class, interface, trait or enum, ours or not.
+            - type: classLike
+              value: '.*'
+          must_not:
+            # ... except our own code, which belongs to the context layers above (or,
+            # for src/Kernel.php, deliberately to no layer at all - R13).
+            - type: classLike
+              value: '^Storyteller\\'
+            # ... and except PHP built-ins. DateTimeImmutable, JsonException and friends
+            # are not "the framework"; the Engine must stay free to use them.
+            - type: php_internal
+              value: '.*'
 
   ruleset:
     # Exactly the five context edges from CLAUDE.md. Note the deliberate absence of
