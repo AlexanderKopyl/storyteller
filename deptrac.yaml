@@ -1,0 +1,91 @@
+deptrac:
+  # Only src/ is analysed. tests/ legitimately depends on the framework and on every
+  # context; giving it a layer is out of scope for this feature.
+  paths:
+    - ./src
+
+  # analyser.types is deliberately NOT set: deptrac's default emitter set already covers
+  # use / class / new / attribute / parameter / return, which is what the rule needs.
+
+  layers:
+    - name: Shared
+      collectors:
+        - type: directory
+          value: src/Shared/.*
+
+    - name: Engine
+      collectors:
+        - type: directory
+          value: src/Engine/.*
+
+    - name: Content
+      collectors:
+        - type: directory
+          value: src/Content/.*
+
+    - name: Play
+      collectors:
+        - type: directory
+          value: src/Play/.*
+
+    - name: Api
+      collectors:
+        - type: directory
+          value: src/Api/.*
+
+    # D4: vendor layer. Without it, `use Doctrine\ORM\EntityManagerInterface;` inside
+    # src/Engine belongs to no layer and deptrac passes silently.
+    - name: Framework
+      collectors:
+        - type: composer
+          composerPath: ./composer.json
+          composerLockPath: ./composer.lock
+          packages:
+            - symfony/framework-bundle
+            - symfony/console
+            - symfony/dotenv
+            - symfony/runtime
+            - symfony/serializer
+            - symfony/validator
+            - symfony/uid
+            - symfony/yaml
+            - symfony/monolog-bundle
+            - symfony/http-foundation
+            - symfony/http-kernel
+            - symfony/dependency-injection
+            - symfony/config
+            - symfony/event-dispatcher
+            - symfony/filesystem
+            - symfony/finder
+            - doctrine/orm
+            - doctrine/dbal
+            - doctrine/persistence
+            - doctrine/collections
+            - doctrine/doctrine-bundle
+            - doctrine/doctrine-migrations-bundle
+            - doctrine/migrations
+            - monolog/monolog
+            - psr/log
+            - psr/container
+
+  ruleset:
+    # Exactly the five context edges from CLAUDE.md. Note the deliberate absence of
+    # Api -> Engine: Api reaches the Engine through Play.
+    Shared: []
+    Engine:
+      - Shared
+    Content:
+      - Engine
+      - Shared
+      - Framework
+    Play:
+      - Engine
+      - Content
+      - Shared
+      - Framework
+    Api:
+      - Play
+      - Content
+      - Shared
+      - Framework
+    Framework: []
