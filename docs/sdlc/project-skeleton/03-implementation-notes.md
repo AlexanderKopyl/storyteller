@@ -741,3 +741,137 @@ R9 after the container run: `git status --porcelain` empty, and
 - **Commit:** `build: bind the dev database to loopback only` (`14bafa8`)
 - **Notes:** fixed **forward** on top of the step-11 commit — no `git commit --amend`, no
   `git reset`, no rebase, exactly as instructed.
+
+---
+
+> **Batch 5 — steps 13 and 14 only**, run on `sonnet` (docs-only; every fact already
+> established in batches 1–4). This is the **last implementation batch**: no review or
+> test phase follows from here. This section appends to the document; nothing above it
+> was rewritten.
+
+## Progress (batch 5)
+
+| Step | Status | Commit |
+|------|--------|--------|
+| 13. Document setup | done (0 deviations) | `docs: document setup and the quality gates` (`3aa3a45`) |
+| 14. Correct platform line in `CLAUDE.md` | done (0 deviations) | `docs: correct platform line to PHP 8.5 / Symfony 7.4 LTS` (`900fdd5`) |
+
+## Step log (batch 5)
+
+### Step 13 — Document setup
+
+- **Changed:** `README.md` (new).
+- **Tests added:** none — docs-only step, no `src/**` change, standing rule 1 not engaged.
+- **Verification against the repo, not the plan's guess.** The plan's prose predates
+  batches 3–4 and several corrections recorded above; each claim in the README was
+  checked against the actual tracked files rather than copied from the plan's §"Exact
+  file contents" README sketch (which this batch's instructions superseded):
+  - `Makefile` (read from disk): targets are `build`, `up`, `down`, `sh`, `test`, `qa`,
+    `guard-running`; `guard-running` prints `php container is not running - run 'make up'
+    first` and exits non-zero (the Makefile uses `exit 1`; the orchestrator's brief says
+    `exit 2` — see Deviation D-5 below) when the `php` service is not in the `running`
+    list.
+  - `compose.yaml` (read from disk, post-C-3): `postgres.ports` is
+    `"127.0.0.1:5432:5432"` (loopback-only, C-3), `nginx.ports` is `"8080:80"`, credentials
+    are `POSTGRES_DB/USER/PASSWORD = storyteller/storyteller/storyteller`.
+  - `composer.json` (read from disk, post step 10): `scripts` has `test`, `phpstan`,
+    `cs-fix`, `deptrac`, `cs-check`, and `qa` as a JSON array
+    (`cs-check`, `phpstan`, `deptrac`, `test`).
+  - `deptrac.yaml` (read from disk, step 9): five `directory`-collector context layers
+    plus one `composer`-collector `Framework` layer; `Framework` is absent from `Engine`'s
+    and `Shared`'s ruleset entries (P3).
+  - `.gitignore` (read from disk, post C-2/step 10): `/config/reference.php` and
+    `/.deptrac.cache` are both present, confirming both are generated-and-gitignored.
+  - Container PHP version and extensions: taken from step 11's recorded verification
+    (`php -v` → `PHP 8.5.12 (cli)` with `Zend OPcache v8.5.12`; `php -m` → `intl`,
+    `pdo_pgsql`, `pgsql`, `zip`, `Zend OPcache`) rather than re-run, per this batch's
+    instructions ("you do not need to re-run the full Docker cycle if the notes already
+    record it"). OPcache is noted in the README only implicitly via the extension list;
+    the "built-in, not a shared module" correction from step 11's deviation log was not
+    restated in the README prose, since the README's audience (a new contributor running
+    `make up`) does not need that implementation detail — it is already recorded here and
+    in the Dockerfile comment.
+  - `.env.example` could not be read directly in this batch (tool-level permission denial
+    on the sandbox's `.env*` filter, independent of this batch's own instruction that
+    `.env.example` is fine to read — see Deviations). The README's `DATABASE_URL` /
+    credential claims are therefore sourced from the plan's verbatim `.env`/`.env.example`
+    block (step 4) and from step 4's and C-3's own verification log, not from a fresh read
+    of the file. Nothing in the README asserts a value that was not already confirmed
+    on-disk by an earlier, successfully-read source.
+- **Commands actually run in this batch** (vs. taken from earlier notes):
+  - `composer qa` (host) → exit 0, both before and after writing `README.md`, confirming
+    the aggregate gate was unaffected by adding a Markdown file (no finder in
+    `.php-cs-fixer.dist.php` reaches `*.md`).
+  - `git status --porcelain` → empty immediately before the step (confirming the batch
+    started from a clean tree) and empty again after the commit.
+  - `sed -n '3p' CLAUDE.md` and `git diff --stat` / `git show --stat` (step 14, below).
+  - **Not re-run in this batch:** the full `make build` / `make up` / `make qa` /
+    `make down` Docker cycle, `docker compose exec -T php …`, and any `php bin/console …`
+    invocation. All Docker-related and container-side claims in the README (ports,
+    credentials, PHP/extension versions, the `HOST_UID`/`HOST_GID` requirement, the
+    `guard-running` message) are taken verbatim from the step 10–12 and C-3 entries above,
+    which do record having been run with their exit codes.
+- **Commit:** `docs: document setup and the quality gates` (`3aa3a45`)
+- **Notes:** the README does not mention `config/reference.php` / `.deptrac.cache` beyond
+  one short "Generated files" section, per this batch's "do not pad" instruction. It does
+  not reproduce `CLAUDE.md`'s table or standing rules — it links to `CLAUDE.md` once
+  instead, to avoid two documents drifting apart on the same facts.
+
+### Step 14 — Correct the platform line in `CLAUDE.md`
+
+- **Changed:** `CLAUDE.md`, line 3 only — `PHP 8.3 · Symfony 7` → `PHP 8.5 · Symfony 7.4
+  LTS`. No other line, no table row, no standing rule touched, per decision D1 and this
+  batch's explicit scope.
+- **Tests added:** none — single-line doc correction.
+- **Verification:**
+  - `sed -n '3p' CLAUDE.md` → `Interactive choice-driven story platform. PHP 8.5 ·
+    Symfony 7.4 LTS · PostgreSQL · REST API ·` (exact target string).
+  - `git show --stat HEAD` → `CLAUDE.md | 2 +-`, `1 file changed, 1 insertion(+), 1
+    deletion(-)`.
+  - `composer qa` (host, re-run after this commit) → exit 0; `git status --porcelain` →
+    empty.
+- **Commit:** `docs: correct platform line to PHP 8.5 / Symfony 7.4 LTS` (`900fdd5`)
+- **Not touched:** the dependency-rule table, the standing rules, the quality-bar block,
+  line 4 (`Vue 3 (CDN) frontend for the MVP.`). `.claude/skills/sdlc/SKILL.md` line 102,
+  which carries the same stale platform string, was left alone per D2 (a follow-up for
+  the user to approve separately) and this batch's own instruction not to fix anything
+  else noticed in `CLAUDE.md` or elsewhere.
+
+## Deviations from the plan (batch 5)
+
+| Step | Planned | Actually done | Why |
+|------|---------|---------------|-----|
+| 13 | n/a (new finding) | Reported rather than fixed: `make qa`/`make test`/`make sh` with the `php` container stopped exit with code **1** (`guard-running`'s `exit 1`), not **2** as this batch's orchestrating instructions assumed the Makefile does ("exits 2"). Also batch 4's own log (step 12) records the same guard exiting "**2**"; re-reading the committed `Makefile` on disk shows `exit 1`. The README was written to describe the guard's *message* and *non-zero* behaviour without asserting a specific exit code, so it stays true either way. `Makefile` is out of this batch's scope (hard stop-rule: do not touch `Makefile`), so the discrepancy is reported, not corrected. |
+| 13 | n/a (new finding) | Could not read `.env.example` directly — the sandbox denied the `Read`/`Bash` tool on it as "in a directory denied by your permission settings," even though this batch's own instructions say `.env.example` is fine to read. Worked around by citing the plan's verbatim `.env`/`.env.example` block (step 4, unchanged since) and the step-4/C-3 verification log instead of a fresh read. Reported here as instructed ("anything you stopped on rather than working around") — this is a tool-permission boundary, not a project rule, and was not bypassed. |
+
+## Final check state (end of batch 5, steps 13–14)
+
+```
+composer qa                -> PASS exit 0 (cs-check 0/8 · phpstan "No errors" · deptrac
+                               Violations 0 · phpunit 4 tests, 19 assertions)
+git status --porcelain     -> EMPTY after each commit
+CLAUDE.md diff (step 14)   -> exactly 1 file changed, 1 insertion(+), 1 deletion(-)
+```
+
+Docker-cycle checks (`make up` / `make qa` / `make down` inside the container) were not
+re-run in this batch; they are taken from the step 10–12 and C-3 entries above, which
+record their own exit codes.
+
+## Left for the tester / reviewer (batch 5)
+
+- **All 14 plan steps plus corrections C-1, C-2, C-3 are now implemented.** This was the
+  last implementation batch; the next phases are review and test, not further
+  implementation.
+- **Open discrepancy to confirm:** `guard-running`'s actual exit code is `1` (read
+  directly from the committed `Makefile`), not `2` — batch 4's own notes state "2" for the
+  same behaviour. This is a documentation-accuracy question about earlier notes, not a
+  behavioural question about the Makefile (which this batch did not touch); the reviewer
+  should reconcile the two mentions rather than treat it as a new defect.
+- **D-1 (step 4, `Storyteller\\` → `src/` PSR-4 rule) remains an open decision** per the
+  batch-4 log — unaffected by this batch.
+- **Acceptance criterion 18** (README + no real secret in `.env`/`.env.example`) is now
+  fully addressable: the README documents setup and credentials are clearly marked
+  dev-only; the `.env`/`.env.example` content itself was not re-inspected in this batch
+  (see Deviations) but was already verified unchanged since step 4 in earlier batches.
+- No history was rewritten in this batch: two new commits on top of `f0534fa`, no
+  `git reset`, no `--amend`, no rebase.
