@@ -9,6 +9,10 @@ $finder = (new PhpCsFixer\Finder())
         __DIR__ . '/config',
         __DIR__ . '/public',
     ])
+    // config/reference.php is Symfony's auto-generated config-builder reference dump;
+    // it is rewritten (without declare(strict_types=1)) on every debug-mode container
+    // compile, so fixing it here is undone by the next `composer test` or console run.
+    ->notPath('reference.php')
     ->append([
         __FILE__,
         __DIR__ . '/bin/console',

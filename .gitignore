@@ -1,5 +1,6 @@
 /vendor/
 /var/
+/config/reference.php
 /.env.local
 /.env.local.php
 /.env.*.local
