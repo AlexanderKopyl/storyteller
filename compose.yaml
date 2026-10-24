@@ -13,8 +13,11 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
-    env_file:
-      - .env
+    # Deliberately NO `env_file: .env`. Compose's env_file promotes those values to real
+    # process environment variables, and Symfony's Dotenv::populate() skips any variable
+    # already present in $_ENV - so the committed `.env` would win over `.env.local` and
+    # the git-ignored override that `.env` itself tells developers to use would be inert.
+    # Dotenv reads /app/.env and then /app/.env.local through the bind mount instead.
     depends_on:
       postgres:
         condition: service_healthy

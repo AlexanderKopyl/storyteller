@@ -27,10 +27,11 @@
     <php>
         <ini name="display_errors" value="1"/>
         <ini name="error_reporting" value="-1"/>
-        <!-- <env> (not just <server>) is required: KernelTestCase reads $_ENV['APP_ENV']
-             before $_SERVER['APP_ENV'], and the Compose php service inherits a real
-             APP_ENV=dev from env_file. Without these two lines the suite boots the dev
-             kernel inside the container and `make qa` cannot pass. -->
+        <!-- <env> (not just <server>) is deliberate: KernelTestCase reads $_ENV['APP_ENV']
+             before $_SERVER['APP_ENV'], so only these two lines make the suite immune to
+             an ambient APP_ENV - an exported shell var, a CI runner, a container env.
+             They are hardening in their own right and are kept now that `env_file: .env`
+             is gone from compose.yaml; they are not what makes the container work. -->
         <env name="APP_ENV" value="test" force="true"/>
         <env name="APP_DEBUG" value="1" force="true"/>
         <server name="APP_ENV" value="test" force="true"/>
