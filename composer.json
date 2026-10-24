@@ -1,0 +1,38 @@
+{
+    "name": "storyteller/storyteller",
+    "description": "Interactive choice-driven story platform",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Storyteller\\Shared\\": "src/Shared/",
+            "Storyteller\\Engine\\": "src/Engine/",
+            "Storyteller\\Content\\": "src/Content/",
+            "Storyteller\\Play\\": "src/Play/",
+            "Storyteller\\Api\\": "src/Api/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Storyteller\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "phpstan": "vendor/bin/phpstan analyse --memory-limit=1G",
+        "cs-fix": "vendor/bin/php-cs-fixer fix",
+        "deptrac": "vendor/bin/deptrac analyse --config-file=deptrac.yaml"
+    },
+    "scripts-descriptions": {
+        "test": "Run the PHPUnit suite",
+        "phpstan": "Static analysis at level 8",
+        "cs-fix": "Apply PSR-12 formatting with php-cs-fixer",
+        "deptrac": "Check the bounded-context dependency rule"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
