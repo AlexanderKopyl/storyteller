@@ -1,0 +1,28 @@
+doctrine:
+    dbal:
+        # serverVersion is set so DBAL never opens a connection just to detect the
+        # platform. The connection stays lazy: nothing connects at compile or boot time.
+        url: '%env(resolve:DATABASE_URL)%'
+        server_version: '16'
+        charset: utf8
+
+    orm:
+        auto_generate_proxy_classes: true
+        # doctrine/orm 3.7 falls back to Symfony's LazyGhostTrait when native lazy
+        # objects are off, but symfony/var-exporter resolved onto the 8.1 line, which
+        # removed that trait - every real EntityManager instantiation then throws
+        # ORMInvalidArgumentException::lazyGhostUnavailable(). PHP 8.5 has native lazy
+        # objects, and ORM 4.0 makes them mandatory. See step 5 in 03-implementation-notes.md.
+        enable_native_lazy_objects: true
+        # The entire R1 mitigation: auto_mapping would point a mapping driver at a
+        # non-existent src/Entity and throw during container compilation.
+        auto_mapping: false
+        mappings: {}
+        controller_resolver:
+            auto_mapping: false
+
+when@test:
+    doctrine:
+        dbal:
+            # No dbname suffix, no DAMA bundle: the test suite never touches the database.
+            url: '%env(resolve:DATABASE_URL)%'
