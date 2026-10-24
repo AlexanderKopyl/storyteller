@@ -26,6 +26,7 @@
 | C-1. Pin the Symfony component set to 7.4 (correction, pre-batch-2) | done | `build: pin the transitive Symfony components to the 7.4 LTS line` |
 | 7. Add PHPStan level 8 | done | `build: add PHPStan level 8 configuration` |
 | 8. Add php-cs-fixer and format the tree | done (1 finding, not a deviation) | `build: enforce PSR-12 and strict types with php-cs-fixer` |
+| C-2. Untrack and exclude `config/reference.php` (correction, post-batch-2) | done | `build: untrack and exclude the generated config reference dump` |
 | 9.–14. | not started (later batches) | — |
 
 ## Step log
@@ -325,6 +326,47 @@ composer qa       -> NOT DEFINED - step 10 (next batch)
 (the six pre-existing `.claude/**` modifications are not mine and were left untouched, per
 instruction).
 
+### Correction step C-2 — Untrack and exclude the generated config reference dump
+
+Run after batch 2 (steps 7–8), on `sonnet`, as a mechanical correction with the decision
+already made by the user: it is not a numbered plan step and does not touch step 9
+(`deptrac.yaml`) or steps 10–14.
+
+- **Problem (confirmed, not re-derived here):** `config/reference.php` is Symfony's
+  auto-generated config-builder reference dump. `PhpConfigReferenceDumpPass` rewrites it on
+  every container compile with `kernel.debug=true`, stripping the
+  `declare(strict_types=1)` line php-cs-fixer adds. `composer cs-fix` made it dirty, the
+  next `composer test` reverted it, and `make qa` — whose first gate is `cs-fix --dry-run`
+  — would pass once and fail on the next run.
+- **Changed:** `.gitignore` (added `/config/reference.php`, grouped with the other
+  leading-slash generated/local paths, directly after `/var/`); `config/reference.php`
+  removed from git's index via `git rm --cached` (left on disk — Symfony regenerates it);
+  `.php-cs-fixer.dist.php` (added `->notPath('reference.php')` to the finder chain, with a
+  comment explaining why).
+- **Tests added:** none — config-only correction, no `src/` change, standing rule 1 not
+  engaged.
+- **Not touched:** `declare_strict_types`, `setRiskyAllowed(true)`, `@PSR12`, or any other
+  fixer rule; `deptrac.yaml`; `CLAUDE.md`; no unscoped `composer update`.
+- **Verification, run in the order `make qa` will use:**
+  1. `composer cs-fix` → exit 0, "Fixed 0 of 8 files" (8, not 9 — `reference.php` is now
+     excluded from the finder's file count).
+  2. `vendor/bin/php-cs-fixer fix --dry-run --diff` → exit 0, "Found 0 of 8 files".
+  3. `composer test` → exit 0, 4 tests / 19 assertions, OK (this compiles the container and
+     regenerates `config/reference.php` on disk, as before).
+  4. `vendor/bin/php-cs-fixer fix --dry-run --diff` again → **exit 0, still "Found 0 of 8
+     files"** — the regression batch 2 flagged (`composer test` re-dirtying the file after
+     a fix) no longer reproduces, because the file is no longer in the finder's scope.
+  5. `git status --short` → empty, both before commit (only the three intended files
+     staged) and after commit (the regenerated-but-ignored `config/reference.php` does not
+     appear as untracked).
+  6. `composer phpstan` → exit 0, "No errors" at level 8 (unaffected, config-only change);
+     `composer validate --strict` → exit 0.
+- **Commit:** `build: untrack and exclude the generated config reference dump`
+  (`7c62df8`).
+- **Notes:** `config/reference.php` still exists on disk after `git rm --cached` and after
+  every subsequent `composer test` run, as required — it was never deleted. No history was
+  rewritten: this is a new commit on top of the batch-2 commit, not an amend.
+
 ## Left for the tester / reviewer
 
 - **D-2 is closed** — resolved by correction step C-1, not accepted; the key is gone from
@@ -336,17 +378,13 @@ instruction).
   deprecation notice (harmless, `about` still exits 0, moot on ORM 4).
 - **Acceptance criterion 16 is unverified**: `bin/console doctrine:migrations:status`
   needs the container from step 11 and a healthy `postgres` service. Re-run it there.
-- **New finding from batch 2 (not a deviation): `config/reference.php` flaps.** It is
-  Symfony's auto-generated config-builder helper file, regenerated without
-  `declare(strict_types=1)` on every debug-mode container compile (`composer test`, any
-  `php bin/console …`). Step 8 committed it in its fixed state, but the very next
-  `composer test` run reverts it locally (uncommitted). This will make step 10's `cs-check`
-  gate of `composer qa` non-deterministic unless resolved before step 10 — either by adding
-  `config/reference.php` to `.gitignore` and untracking it (it was never in the plan's file
-  list and is exactly the kind of generated artifact `.gitignore` already excludes for
-  `var/`/`vendor/`), or by a recorded plan decision to exclude it from the cs-fixer finder.
-  This decision is outside batch 2's scope (steps 7–8 only) and needs the
-  orchestrator/reviewer to pick a resolution before batch 3 (step 9 onward) starts.
+- **Finding from batch 2 (`config/reference.php` flaps) — RESOLVED by correction step
+  C-2.** The user's decision was implemented: the file is untracked (`git rm --cached`,
+  left on disk), gitignored, and excluded from the cs-fixer finder via `->notPath(...)`.
+  `composer test` still regenerates it on disk as before, but it no longer re-enters the
+  fixer's scope or git's index, so `cs-fix --dry-run` stays at exit 0 across repeated
+  `composer test` runs. No fixer rule was weakened. This is settled before batch 3
+  (step 9 onward) starts.
 - Criteria 1–5, 7–11, 13 (`.gitkeep` tracking is done, but the gates that check it are
   not), 18 (README) all depend on steps 9–14 and are untouched by this batch; criteria 4, 7,
   8, 9 are now checkable (PHPStan level 8 and PSR-12/strict-types enforcement both exist and
