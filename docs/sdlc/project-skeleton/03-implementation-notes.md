@@ -875,3 +875,258 @@ record their own exit codes.
   (see Deviations) but was already verified unchanged since step 4 in earlier batches.
 - No history was rewritten in this batch: two new commits on top of `f0534fa`, no
   `git reset`, no `--amend`, no rebase.
+
+---
+
+# Gate C fix loop 1 — blockers B1 and B2
+
+- **Scope:** `04-review.md` blockers **B1** and **B2** only. Majors M1–M4 and minors
+  m1–m10 were deliberately **not** touched; they are carried forward as open items.
+- **Date:** 2026-10-24 · **Model:** `opus` (capability floor: B1 is the cross-context
+  dependency contract, B2 is the container's environment/secret surface).
+- **No history was rewritten:** two new commits on top of `c01a311`. No `git reset`, no
+  `--amend`, no rebase, no force push.
+
+## Progress
+
+| Item | Status | Commit |
+|------|--------|--------|
+| B1 — dependency rule does not fire for most vendor packages | done | `build: make the dependency rule fire for every vendor package` (`ba4740c`) |
+| B2 — `.env.local` inert inside the container | done | `build: let .env.local override inside the container` (`9e2c12b`) |
+| Notes | done | `docs: record the Gate C fix loop for B1 and B2` |
+
+## B1 — make the dependency rule fire for every vendor dependency
+
+- **Changed:** `deptrac.yaml` (the `Framework` layer; a new explicit
+  `ignore_uncovered_internal_classes: true`), `composer.json` (the `deptrac` script and
+  its description).
+- **Tests added:** none — no `src/**` production code changed. The evidence is the probe
+  table below, run as throwaway files exactly as step 9 did. `src/Engine/**` was touched
+  only by probes that were created, measured and deleted within the same command; nothing
+  under `src/` is in either commit, so standing rule 1 is not engaged.
+- **Checks (host):** `composer cs-fix` 0 (Fixed 0 of 8) · `composer phpstan` 0 (`[OK] No
+  errors`) · `composer deptrac` 0 · `composer test` 0 (4 tests, 19 assertions) ·
+  `composer qa` 0 · `composer validate --strict` 0 · `git status --porcelain` clean.
+
+### Reproduction, before the fix
+
+A probe class in `src/Engine` with `use Symfony\Component\Routing\Route;`:
+
+```
+composer deptrac -> EXIT=0   Violations 0 · Uncovered 2 · Allowed 0
+```
+
+Confirmed on the host before any edit. The gate counted the breach and passed.
+
+### Mechanism chosen, and why
+
+Both halves the review suggested, because each covers a hole the other does not.
+
+1. **The `Framework` layer is now exhaustive by construction.** The hand-written
+   ~25-package `composer` collector is gone. In its place, a `bool` collector:
+
+   - `must`: `classLike` `.*` — every class, interface, trait or enum.
+   - `must_not`: `classLike` `^Storyteller\\` — except our own code, which belongs to the
+     five context layers (or, for `src/Kernel.php`, deliberately to no layer at all).
+   - `must_not`: `php_internal` `.*` — and except PHP built-ins, so the Engine stays free
+     to use `DateTimeImmutable`, `JsonException` and friends.
+
+   There is no list to keep in sync with `composer.json`, so the layer cannot go stale
+   when a package is added, removed or upgraded. That is the direct answer to the brief's
+   constraint 3: hand-enumeration is what failed, so the enumeration is gone rather than
+   corrected.
+
+2. **`composer deptrac` now runs with `--report-uncovered --fail-on-uncovered`.** With
+   (1) in place, a vendor class can no longer be uncovered — so what this flag actually
+   catches is the *other* unlayered zone: a `Storyteller\…` class that matches none of the
+   five `directory` collectors. That class of hole becomes a hard failure with an
+   actionable report instead of a counted-and-ignored statistic.
+
+**Why `ignore_uncovered_internal_classes: true` is now written out explicitly.** It is
+deptrac's default, but `--fail-on-uncovered` depends on it: without it, every
+`DateTimeImmutable` in a layered class would fail the gate. It is spelled out in the file
+with that reason so nobody flips it without understanding the consequence.
+
+**The cost, stated plainly.** The `Framework` layer can no longer tell one vendor package
+from another. A future narrow grant — review **m2**'s "let `Shared` use `symfony/uid`
+alone" — now needs its own layer with a `composer` collector *plus* a matching `must_not`
+entry in `Framework`, so the two layers stay disjoint (a token in two layers is a deptrac
+warning and makes both rulesets apply). That is strictly more work than editing one list,
+and it is the right trade: the expensive case is the rare, deliberate, reviewed one, and
+the cheap case — "a package was added and nobody updated deptrac" — can no longer go
+wrong. The reasoning is written into `deptrac.yaml` next to the collector.
+
+**What was NOT changed, deliberately:**
+
+- P3 survives: `Framework` is still withheld from `Engine` and from `Shared`
+  (`Shared: []`, `Engine: [Shared]`).
+- The five context edges are byte-for-byte unchanged, and **`Api -> Engine` is still
+  absent** (probe P5 proves it).
+- `src/Kernel.php` is still in no layer and still boots. `--fail-on-uncovered` does not
+  touch it: `DependencyLayersAnalyser` iterates `foreach ($dependerLayers as …)`, so a
+  dependency whose *depender* is unlayered dispatches no event at all. No `Kernel` layer
+  was needed, no collector was broadened to cover it. Verified by `bin/console about`
+  exit 0 on host and in the container, and by `composer deptrac` exit 0 on the clean tree.
+- No `skip_violations`, no baseline, no lowered level, no widened layer, no dropped probe.
+
+### Probe table
+
+Each probe: file(s) created under `src/`, `composer deptrac` run, exit code and report
+recorded, files deleted. Nothing was committed. P4/P5/P6 create the *target* class as a
+real file too, so the target resolves to its context layer and the probe measures the
+dependency rule rather than an uncovered token.
+
+**Host** (macOS, PHP 8.5.3, CWD = project root):
+
+| # | Probe | Expected | Exit | Report |
+|---|-------|----------|------|--------|
+| P1 | `src/Engine` → `Symfony\Component\Routing\Route` | fail (**was passing**) | **1** | `DependsOnDisallowedLayer … (Framework)` ×2 · Violations 2 · Uncovered 0 |
+| P2 | `src/Engine` → `Doctrine\ORM\EntityManagerInterface` | fail | **1** | `DependsOnDisallowedLayer … (Framework)` · Violations 1 · Uncovered 0 |
+| P3 | `src/Shared` → `Symfony\Component\String\UnicodeString` | fail (**was passing**) | **1** | `DependsOnDisallowedLayer … (Framework)` ×2 · Violations 2 · Uncovered 0 |
+| P4 | `src/Engine` → `Storyteller\Content\Domain\ProbeStory` | fail | **1** | `DependsOnDisallowedLayer … (Content)` ×2 · Violations 2 |
+| P5 | `src/Api/Controller` → `Storyteller\Engine\ProbeState` | fail | **1** | `DependsOnDisallowedLayer … (Engine)` ×2 · Violations 2 |
+| P6 | `src/Play/Application` → Engine + Content (positive control) | **pass** | **0** | Violations 0 · Uncovered 0 · **Allowed 2** |
+
+**Container** (`docker compose exec -T php`, PHP 8.5.12, CWD = `/app`): the same script,
+piped into the container, produced **identical exit codes and identical violation text**
+for all six probes, including `Allowed 2` on P6. This matters because the old `composer`
+collector read `composer.lock` by a CWD-relative path; the new collector reads nothing
+from disk, so the host/container equivalence is now structural rather than incidental.
+
+`git status --short` after each probe run showed only the in-progress blocker edits and
+the untracked `04-review.md` — no probe file survived.
+
+The `Allowed 2` on P6 is the load-bearing part of the control: it proves rules were
+actually *evaluated* and permitted, not that the analyser found nothing to look at.
+
+## B2 — `.env.local` now overrides inside the container
+
+- **Changed:** `compose.yaml` (removed the `env_file: - .env` block from the `php`
+  service, replaced by a comment explaining why it must not come back), `phpunit.xml`
+  (comment only — the `<env>` lines themselves are kept verbatim).
+- **Tests added:** none; this is container configuration. The existing suite is the
+  regression check and it passes unchanged on host and in the container.
+- **Checks (container):** `make up` ok · `make qa` **exit 0** · `doctrine:migrations:status`
+  **exit 0** · `bin/console about` exit 0 (Symfony v7.4.21, env `dev`) · `make down` ok,
+  `storyteller_pgdata` still present · `find . -user root -not -path './vendor/*'` empty.
+
+### Why the block had to go
+
+`env_file:` promotes `.env`'s values to the container's **real process environment**.
+`Dotenv::populate()` skips any variable already present in `$_ENV`, so the committed
+`.env` won unconditionally and the git-ignored `.env.local` — the override `.env:1` and
+the README both tell developers to use — could never take effect in the only supported
+runtime.
+
+### Verification that the override now works
+
+With a temporary, git-ignored, secret-free `.env.local`:
+
+```
+docker compose exec -T php printenv APP_ENV        -> no output, exit 1
+docker compose exec -T php printenv DATABASE_URL   -> no output, exit 1   (ambient env gone)
+
+bin/console debug:dotenv
+  Scanned Files: ✓ .env.local  ✓ .env
+  APP_SECRET     overridden_from_env_local_not_a_secret   (.env.local wins over .env)
+  DATABASE_URL   …/storyteller_envlocal_probe             (.env.local wins over .env)
+
+bin/console doctrine:migrations:status
+  doctrine.INFO: Connecting with parameters … "dbname":"storyteller_envlocal_probe"
+  -> exit 7, FATAL: database "storyteller_envlocal_probe" does not exist
+```
+
+That last line is the strongest form of the proof available: the override did not merely
+show up in a debug command, it reached Doctrine's actual connection parameters. The
+fabricated database name is why the command failed, and that failure is the evidence.
+
+The file was then **deleted** (`find . -maxdepth 1 -name '.env.local' -type f -delete`).
+It was never staged; `git check-ignore -v .env.local` reported `.gitignore:4:/.env.local`.
+It contained a placeholder string, never a real secret.
+
+After deletion, re-verified in the container:
+
+```
+bin/console debug:dotenv            -> exit 0, ".env.local" shown as ⨯ (absent)
+                                       APP_SECRET back to change_me_in_env_local
+bin/console doctrine:migrations:status -> exit 0
+make qa                             -> exit 0
+```
+
+### What was kept
+
+The step-11b `<env name="APP_ENV">` / `<env name="APP_DEBUG">` entries in `phpunit.xml`
+are **unchanged**. Only their comment was corrected: it cited `env_file` as the reason
+they were needed, which is no longer true. They are kept because they are independently
+right — `KernelTestCase` reads `$_ENV` before `$_SERVER`, so they make the suite hermetic
+against any ambient `APP_ENV` (an exported shell variable, a CI runner). This fix removed
+the thing that *required* them, not the hardening itself. `make qa` exit 0 after the
+change confirms they still do their job with no env_file in play.
+
+Nothing broke in the container as a result of the removal: the app boots, the suite
+passes, and `doctrine:migrations:status` exits 0.
+
+## Deviations from the plan (Gate C fix loop 1)
+
+| Item | Planned | Actually done | Why |
+|------|---------|---------------|-----|
+| B1 | The plan (step 9, §`deptrac.yaml`) prescribes a `composer` collector with a verbatim 26-package list, and says "every package name listed must exist in `composer.lock`… do not replace the list with a wildcard." | The `composer` collector and its list were **removed** and replaced by a `bool` collector (`classLike .*` minus `^Storyteller\\` minus `php_internal`). | The plan's instruction is the defect the review found: it checks list ⊆ lock, which is the wrong direction — the property that matters is lock ⊆ list, and C-1 broke it nine packages at a time. "Do not replace the list with a wildcard" was written to stop the list being *weakened*; this change strengthens it (every vendor package is now covered, not 26 of 59) and keeps P3 intact. Recorded as a deliberate, reviewed departure from a prescriptive plan section, authorised by the Gate C fix brief. |
+| B1 | The plan does not specify any `deptrac analyse` flags. | Added `--report-uncovered --fail-on-uncovered` to the `deptrac` composer script. | Explicitly requested by the fix brief and by review B1. Strengthens the gate; standing rule 4 is not in tension. |
+| B1 | n/a | `ignore_uncovered_internal_classes: true` written out explicitly (it is already deptrac's default). | Documentation, not behaviour change: `--fail-on-uncovered` is only safe because of it. |
+| B2 | The plan's `compose.yaml` (§`compose.yaml`, step 11) contains `env_file: - .env` verbatim. | The block was removed. | Review B2. The plan's shape makes `.env.local` inert in the container, contradicting the plan's own `.env` text ("override in .env.local"). Fixing the environment rather than patching around it was the call the review says step 11b should have escalated for. |
+| scope | — | **Majors and minors left untouched on purpose.** | The brief scopes this loop to B1 and B2 and states the user has not approved work on the rest. |
+
+**Overlap with an open major, reported as instructed.** Fixing B1 necessarily touches
+something **M3** describes. M3's complaint is that D-1's `"Storyteller\\": "src/"` psr-4
+rule makes the layer-free zone at the `src/` root *generically reachable*, and it notes
+that the hole is silent "because the `deptrac` script does not pass `--fail-on-uncovered`".
+Adding that flag makes the hole **noisy** — a future `src/Support/Clock.php` used by a
+context would now fail `composer deptrac` as an uncovered dependency instead of exiting 0.
+M3's own suggested fix ("if the psr-4 rule is kept, pair it with `--fail-on-uncovered`")
+is therefore now satisfied. **M3 itself is NOT fixed:** `composer.json` still carries
+`"Storyteller\\": "src/"`, the narrow classmap alternative was not adopted, and the open
+decision D-1 asks for is still open. No other major or minor was affected.
+
+## Final check state (Gate C fix loop 1)
+
+Host (macOS, PHP 8.5.3):
+
+```
+composer validate --strict -> exit 0
+composer cs-fix            -> exit 0  (Fixed 0 of 8 files)
+composer phpstan           -> exit 0  ([OK] No errors)
+composer deptrac           -> exit 0  (Violations 0 · Uncovered 0 · Allowed 0)
+composer test              -> exit 0  (OK, 4 tests, 19 assertions)
+composer qa                -> exit 0  (all four, in order)
+git status --porcelain     -> clean except the untracked, out-of-scope
+                              docs/sdlc/project-skeleton/04-review.md
+```
+
+Container (php 8.5.12):
+
+```
+make up                                -> exit 0 (postgres healthy)
+make qa                                -> exit 0  <- the feature's acceptance criterion
+bin/console about                      -> exit 0 (Symfony v7.4.21, env dev)
+bin/console doctrine:migrations:status -> exit 0
+B1 probe table (P1-P6)                 -> 1,1,1,1,1,0 — identical to the host
+make down                              -> exit 0, storyteller_pgdata volume survives
+find . -user root -not -path './vendor/*' -> empty
+```
+
+## Left for the tester / reviewer (Gate C fix loop 1)
+
+- **Both blockers are closed and proven**, on the host *and* in the container. The probe
+  table is the evidence for B1; `debug:dotenv` plus Doctrine's connection parameters are
+  the evidence for B2.
+- **Still open, untouched, not approved for work:** M1 (`migrations/` outside every gate),
+  M2 (PHPStan analysing the generated `config/reference.php`), M3 (the `Storyteller\ =>
+  src/` psr-4 rule — now *noisy* thanks to `--fail-on-uncovered`, but still present), M4
+  (the unrecorded `.claude/**` commit), and all ten minors including m1's
+  `guard-running` exit-code transcription slip and m2's `symfony/uid`-in-`Shared` decision.
+- **New follow-up created by this loop:** m2 is now slightly more expensive to resolve —
+  see the "cost" paragraph under B1. Deciding m2 before the first `src/Shared` class is
+  worth more than it was.
+- `docs/sdlc/project-skeleton/04-review.md` is **untracked** and was deliberately not
+  committed: the fix brief forbids touching the review document. Whoever owns the phase
+  docs should decide whether it is committed.
