@@ -8,6 +8,11 @@
 > the `qa` script, Docker, Makefile, README, the `CLAUDE.md` line-3 edit) are deliberately
 > not implemented here and belong to later batches, which append to this same document.
 
+> **Batch 2 — steps 7–8 only**, run on `sonnet` per the plan's routing table (both steps
+> ship their file contents verbatim; no design judgement was open). Steps 9–14 (deptrac,
+> the `qa` script, Docker, Makefile, README, the `CLAUDE.md` line-3 edit) remain for later
+> batches.
+
 ## Progress
 
 | Step | Status | Commit |
@@ -18,8 +23,10 @@
 | 4. Boot a minimal Symfony kernel | done (1 deviation) | `feat: boot a minimal Symfony 7.4 kernel` |
 | 5. Wire Doctrine with zero entities | done (2 deviations) | `build: configure Doctrine and migrations without entities` |
 | 6. PHPUnit suites and the first tests | done | `test: add PHPUnit suites and the kernel boot smoke test` |
-| 7.–14. | not started (later batches) | — |
 | C-1. Pin the Symfony component set to 7.4 (correction, pre-batch-2) | done | `build: pin the transitive Symfony components to the 7.4 LTS line` |
+| 7. Add PHPStan level 8 | done | `build: add PHPStan level 8 configuration` |
+| 8. Add php-cs-fixer and format the tree | done (1 finding, not a deviation) | `build: enforce PSR-12 and strict types with php-cs-fixer` |
+| 9.–14. | not started (later batches) | — |
 
 ## Step log
 
@@ -194,6 +201,71 @@ resolved and retires deviation D-2.
 - **Not touched:** steps 7–14 (PHPStan, cs-fixer, deptrac, `qa`, Docker, Makefile, README,
   the `CLAUDE.md` line-3 edit) and deviation D-1, which stands.
 
+### Step 7 — Add PHPStan level 8
+
+- **Changed:** `phpstan.neon` (new) — the plan's verbatim content, including level 8,
+  `phpVersion: 80500`, the `phpstan-symfony`/`phpstan-doctrine` includes, `paths: [src,
+  tests, config, public]`, `tmpDir: var/phpstan`, and `containerXmlPath` left unset and
+  commented out (P5/R4).
+- **Tests added:** none — config-only step, no `src/` change, standing rule 1 not engaged.
+- **Checks:** `composer phpstan` → **exit 0, "No errors"** at level 8 against the existing
+  `src/`, `tests/`, `config/`, `public/` tree. `composer test` and `composer cs-fix` not
+  re-run as part of this step (no code change); `composer deptrac` out of scope (step 9).
+- **Verification:** `composer phpstan` → exit 0; `test ! -f phpstan-baseline.neon` → exit 0
+  (no baseline file exists or was created).
+- **Commit:** `build: add PHPStan level 8 configuration`
+- **Notes:** no code change was needed to reach level 8 — the step-1–6 tree (Kernel,
+  config files, the two test classes) was already clean at this level. No baseline was
+  added and none will be; per CLAUDE.md standing rule 4, a future level-8 failure must be
+  fixed in code, not baselined.
+
+### Step 8 — Add php-cs-fixer and format the tree
+
+- **Changed:** `.php-cs-fixer.dist.php` (new) — the plan's verbatim content: `@PSR12` +
+  `declare_strict_types` + five supporting rules, `setRiskyAllowed(true)` (R5), finder over
+  `src/`, `tests/`, `config/`, `public/` with `bin/console` and the config file itself
+  appended. `config/reference.php` (reformatted by the fixer — see Notes below).
+- **Tests added:** none — config-only step.
+- **Checks:** `composer cs-fix` → fixed 1 of 9 files (`config/reference.php`);
+  `vendor/bin/php-cs-fixer fix --dry-run --diff` → **exit 0**, 0 of 9 files need fixing,
+  immediately after the fix. `composer phpstan` re-run → exit 0 (unaffected).
+  `composer test` → exit 0, 4 tests / 19 assertions, 0 failures/errors/skipped/risky.
+  `composer validate --strict` → exit 0.
+- **Verification that `declare_strict_types` actually fires (R5):** `declare(strict_types=1);`
+  was temporarily removed from `src/Kernel.php`; `vendor/bin/php-cs-fixer fix --dry-run
+  --diff` then reported `src/Kernel.php` as fixable and exited **8** (non-zero), with a diff
+  re-adding the exact line. The file was restored immediately afterward and a follow-up
+  dry-run confirmed 0 of 9 files need fixing / exit 0 again. This proves `setRiskyAllowed(true)`
+  is in effect — without it the rule would not resolve at all, let alone fire.
+- **Commit:** `build: enforce PSR-12 and strict types with php-cs-fixer`
+- **Notes / finding for the reviewer (not a plan deviation, but worth flagging loudly):**
+  `config/reference.php` — committed in step 5 of batch 1, not listed in the plan's file
+  tables — is Symfony's auto-generated config-builder IDE-helper file
+  (`Symfony\Bundle\FrameworkBundle\FrameworkBundle::build()` registers
+  `PhpConfigReferenceDumpPass`, which rewrites `config/reference.php` on **every** container
+  compilation with `kernel.debug = true`, i.e. both `dev` and `test`). Consequences observed:
+  - The fixer correctly flags it (missing `declare(strict_types=1)`) because it sits inside
+    the `config/` finder path the plan specifies; fixing it and committing it is the
+    expected behaviour per this batch's instructions ("if step 8's fixer rewrites any file
+    committed in steps 1–6 … include those rewrites in step 8's commit").
+  - Running `composer test` (or any `php bin/console` invocation) **immediately reverts**
+    the fix — Symfony regenerates the file from scratch without the `declare` line every
+    time the container is rebuilt in debug mode. This was reproduced twice: fix → dry-run
+    clean (exit 0) → `composer test` → file dirtied again (verified via `git status
+    --porcelain` and `git diff`) → `git checkout -- config/reference.php` to return the
+    working tree to the committed (fixed) state.
+  - This is **not a step 7/8 defect**: no cs-fixer rule was narrowed, no finder exclude was
+    added, and `setRiskyAllowed` was not touched, per the hard stop-rules. The root cause
+    predates batch 2 — the file should arguably never have been committed in step 5 (it is
+    exactly the kind of auto-generated artifact `.gitignore` already excludes for `var/` and
+    `vendor/`), but amending `.gitignore` or `git rm --cached` on a step-5 file is outside
+    this batch's scope (steps 7–8 only) and is reported here rather than improvised.
+  - **Practical impact for step 10 (future batch):** the `qa` script's `cs-check` step will
+    intermittently fail (depending on whether a kernel boot happened since the last
+    `cs-fix`) unless this is resolved — either by gitignoring `config/reference.php` and
+    untracking it, or by excluding it from the cs-fixer finder with a recorded plan
+    decision. Recommend the orchestrator decide before step 10 is implemented.
+
 ## Deviations from the plan
 
 | Step | Planned | Actually done | Why |
@@ -237,6 +309,22 @@ Supporting verifications: `composer validate --strict` exit 0 · `php bin/consol
 exit 0 (Symfony v7.4.21 LTS, PHP 8.5.3, no database, no deprecations) ·
 `git status --porcelain` empty after every commit.
 
+## Final check state (end of batch 2, steps 7–8)
+
+```
+composer phpstan  -> PASS exit 0, "No errors" at level 8, no phpstan-baseline.neon created
+composer cs-fix   -> PASS exit 0, fixed config/reference.php (see finding below)
+cs-fixer --dry-run --diff -> PASS exit 0 immediately after cs-fix (0 of 9 files to fix)
+composer test     -> PASS exit 0, 4 tests, 19 assertions, 0 failures/errors/skipped/risky
+composer validate --strict -> PASS exit 0
+composer deptrac  -> NOT RUN - deptrac.yaml is step 9 (next batch)
+composer qa       -> NOT DEFINED - step 10 (next batch)
+```
+
+`git status --porcelain` is empty for all files owned by this batch after every commit
+(the six pre-existing `.claude/**` modifications are not mine and were left untouched, per
+instruction).
+
 ## Left for the tester / reviewer
 
 - **D-2 is closed** — resolved by correction step C-1, not accepted; the key is gone from
@@ -248,8 +336,21 @@ exit 0 (Symfony v7.4.21 LTS, PHP 8.5.3, no database, no deprecations) ·
   deprecation notice (harmless, `about` still exits 0, moot on ORM 4).
 - **Acceptance criterion 16 is unverified**: `bin/console doctrine:migrations:status`
   needs the container from step 11 and a healthy `postgres` service. Re-run it there.
+- **New finding from batch 2 (not a deviation): `config/reference.php` flaps.** It is
+  Symfony's auto-generated config-builder helper file, regenerated without
+  `declare(strict_types=1)` on every debug-mode container compile (`composer test`, any
+  `php bin/console …`). Step 8 committed it in its fixed state, but the very next
+  `composer test` run reverts it locally (uncommitted). This will make step 10's `cs-check`
+  gate of `composer qa` non-deterministic unless resolved before step 10 — either by adding
+  `config/reference.php` to `.gitignore` and untracking it (it was never in the plan's file
+  list and is exactly the kind of generated artifact `.gitignore` already excludes for
+  `var/`/`vendor/`), or by a recorded plan decision to exclude it from the cs-fixer finder.
+  This decision is outside batch 2's scope (steps 7–8 only) and needs the
+  orchestrator/reviewer to pick a resolution before batch 3 (step 9 onward) starts.
 - Criteria 1–5, 7–11, 13 (`.gitkeep` tracking is done, but the gates that check it are
-  not), 18 (README) all depend on steps 7–14 and are untouched by this batch.
-- Not implemented here by instruction: `phpstan.neon`, `.php-cs-fixer.dist.php`,
-  `deptrac.yaml`, the `cs-check`/`qa` scripts, `Dockerfile`, `compose.yaml`,
-  `docker/**`, `Makefile`, `README.md`, and the `CLAUDE.md` line-3 edit.
+  not), 18 (README) all depend on steps 9–14 and are untouched by this batch; criteria 4, 7,
+  8, 9 are now checkable (PHPStan level 8 and PSR-12/strict-types enforcement both exist and
+  pass) but the aggregate `qa` script (criterion 4's full form) is still step 10.
+- Not implemented here by instruction: `deptrac.yaml`, the `cs-check`/`qa` scripts,
+  `Dockerfile`, `compose.yaml`, `docker/**`, `Makefile`, `README.md`, and the `CLAUDE.md`
+  line-3 edit.
