@@ -1,6 +1,6 @@
 # Storyteller — Project Rules
 
-Interactive choice-driven story platform. PHP 8.3 · Symfony 7 · PostgreSQL · REST API ·
+Interactive choice-driven story platform. PHP 8.5 · Symfony 7.4 LTS · PostgreSQL · REST API ·
 Vue 3 (CDN) frontend for the MVP.
 
 ## Architecture — modular monolith, bounded contexts
