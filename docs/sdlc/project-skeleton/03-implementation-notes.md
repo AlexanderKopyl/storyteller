@@ -19,6 +19,7 @@
 | 5. Wire Doctrine with zero entities | done (2 deviations) | `build: configure Doctrine and migrations without entities` |
 | 6. PHPUnit suites and the first tests | done | `test: add PHPUnit suites and the kernel boot smoke test` |
 | 7.–14. | not started (later batches) | — |
+| C-1. Pin the Symfony component set to 7.4 (correction, pre-batch-2) | done | `build: pin the transitive Symfony components to the 7.4 LTS line` |
 
 ## Step log
 
@@ -145,12 +146,60 @@
   - `KernelBootTest` deliberately never calls `getConnection()`, `connect()`,
     `executeQuery()` or any schema API.
 
+### Correction step C-1 — Pin the transitive Symfony components to the 7.4 LTS line
+
+Run between batch 1 and batch 2 on the user's decision, after the batch-1 observation below
+was reviewed. It is **not** a numbered plan step; it corrects the dependency set that step 3
+resolved and retires deviation D-2.
+
+- **Changed:** `composer.json` (13 packages added to `require` at `7.4.*`, in the existing
+  `sort-packages` order), `composer.lock` (re-resolved), `config/packages/doctrine.yaml`
+  (removed `orm.enable_native_lazy_objects: true` and its explanatory comment — the file is
+  now byte-for-byte the plan's primary shape again).
+- **Tests added:** none. No `src/` file changed; standing rule 1 is not engaged. The change
+  is covered by the existing `KernelBootTest::testDoctrineIsWiredWithoutOpeningAConnection`,
+  which instantiates a real `EntityManager` — the exact call that threw
+  `ORMInvalidArgumentException::lazyGhostUnavailable()` before D-2 and that now passes with
+  the workaround removed.
+- **Re-resolution:** `composer update` scoped to the 13 packages only (no unscoped update, no
+  `--with-all-dependencies`, no widened constraint, no `--ignore-platform-reqs`). The resolver
+  accepted the full pin set on the first attempt: 13 downgrades, 0 installs, and the removal of
+  `symfony/polyfill-deepclone` v1.43.2, which was pulled in only by the Symfony 8 components.
+  Resolved versions: `error-handler` v7.4.20, `event-dispatcher` v7.4.17, `filesystem` v7.4.21,
+  `finder` v7.4.20, `http-foundation` v7.4.21, `monolog-bridge` v7.4.18, `options-resolver`
+  v7.4.8, `process` v7.4.21, `routing` v7.4.21, `stopwatch` v7.4.8, `string` v7.4.21,
+  `var-dumper` v7.4.21, `var-exporter` v7.4.18.
+- **Standing rule 9 justification.** These are **not new dependencies**. All thirteen were
+  already installed after step 3 as transitive requirements of `symfony/framework-bundle`,
+  `symfony/console`, `symfony/runtime`, `symfony/monolog-bundle`, `symfony/serializer`,
+  `symfony/validator` and `doctrine/orm`. Promoting them to explicit `require` entries adds no
+  code to the vendor tree; it only removes the version ambiguity of the transitive
+  `^7.4|^8.0` constraints, which is what let them drift onto the 8.1 line. The reason is
+  stated here per rule 9: this project is a **Symfony 7.4 LTS** skeleton (`02-plan.md`,
+  D1/D7), and a dependency set that is 7.4 only at the edges is not that. The pin makes the
+  LTS line a property of the lock file instead of a resolver accident.
+- **Verification:** `composer validate --strict` exit 0 · `php bin/console about` exit 0 with
+  no reachable database, reporting Symfony **v7.4.21** (Long-Term Support: Yes), PHP 8.5.3 ·
+  `composer test` exit 0 (**4 tests, 19 assertions**, 0 failures/errors/skipped/risky) with no
+  reachable database (`postgres` does not resolve on the host) ·
+  `composer show 'symfony/*'` filtered for a leading `8.` → **no surviving 8.x entry**; every
+  Symfony component is on 7.4.x (plus the version-independent `*-contracts` 3.7.x and
+  `polyfill-*` 1.x packages, which have no 7.4/8.x line).
+- **Commit:** `build: pin the transitive Symfony components to the 7.4 LTS line`
+- **Side effect, reported not worked around:** removing `enable_native_lazy_objects` brings
+  back the `Doctrine\ORM\Proxy\Autoloader` *deprecation notice* that D-2 had silenced. It is
+  logged by Monolog on stderr in dev; `php bin/console about` still exits 0 and no gate is
+  affected. Silencing it again would mean re-adding a key the plan does not authorize, so it
+  is left in place and flagged for the reviewer. It becomes moot on the move to ORM 4.
+- **Not touched:** steps 7–14 (PHPStan, cs-fixer, deptrac, `qa`, Docker, Makefile, README,
+  the `CLAUDE.md` line-3 edit) and deviation D-1, which stands.
+
 ## Deviations from the plan
 
 | Step | Planned | Actually done | Why |
 |------|---------|---------------|-----|
 | 4 (D-1) | `composer.json` `autoload.psr-4` maps the five context namespaces plus `Storyteller\Migrations\`; `Kernel` lives at `src/Kernel.php` in namespace `Storyteller` | Added one more rule: `"Storyteller\\": "src/"` | The plan's map has **no** rule covering `Storyteller\Kernel`, so `php bin/console about` — the step's own verification — died with `ClassNotFoundError: Attempted to load class "Kernel" from namespace "Storyteller"`. This is the minimal additive fix and the only one that keeps the Kernel at `src/Kernel.php` outside every context directory, which R13 requires. Longer PSR-4 prefixes still win, so the five context mappings are unaffected; `autoload` is not part of `composer.lock`'s content hash, so the lock is untouched and `composer validate --strict` stays green. |
-| 5 (D-2) | `doctrine.orm` carries only `auto_generate_proxy_classes`, `auto_mapping: false`, `mappings: {}`, `controller_resolver.auto_mapping: false`; the plan names the permitted keys and forbids adding `enable_lazy_ghost_objects` and friends | Added `enable_native_lazy_objects: true` under `doctrine.orm`, with an explanatory comment | `doctrine/orm` 3.7.5 falls back to Symfony's `LazyGhostTrait` when native lazy objects are off, but `symfony/var-exporter` resolved to **v8.1.9** (transitively allowed by `^6.3.9\|^7.0\|^8.0`) and Symfony 8 **removed** that trait. `ProxyFactory::__construct` then throws `ORMInvalidArgumentException::lazyGhostUnavailable()` on the first real `EntityManager` instantiation — reproduced by `bin/console doctrine:migrations:status` (exit 1). This breaks acceptance criterion 16 **inside the container as well**, so it is not an artifact of the missing database. PHP 8.5 supports native lazy objects and ORM 4.0 makes them mandatory, so this is the forward-correct fix; it also removes the `Doctrine\ORM\Proxy\Autoloader` deprecation (`about` now boots with zero deprecations). Alternative considered and **not** taken: constraining `symfony/var-exporter` to `7.4.*`, which treats the symptom and leaves the rest of the 8.1 drift in place — that is a dependency decision for the orchestrator, not the implementer. |
+| 5 (D-2) | `doctrine.orm` carries only `auto_generate_proxy_classes`, `auto_mapping: false`, `mappings: {}`, `controller_resolver.auto_mapping: false`; the plan names the permitted keys and forbids adding `enable_lazy_ghost_objects` and friends | Added `enable_native_lazy_objects: true` under `doctrine.orm`, with an explanatory comment | `doctrine/orm` 3.7.5 falls back to Symfony's `LazyGhostTrait` when native lazy objects are off, but `symfony/var-exporter` resolved to **v8.1.9** (transitively allowed by `^6.3.9\|^7.0\|^8.0`) and Symfony 8 **removed** that trait. `ProxyFactory::__construct` then throws `ORMInvalidArgumentException::lazyGhostUnavailable()` on the first real `EntityManager` instantiation — reproduced by `bin/console doctrine:migrations:status` (exit 1). This breaks acceptance criterion 16 **inside the container as well**, so it is not an artifact of the missing database. PHP 8.5 supports native lazy objects and ORM 4.0 makes them mandatory, so this is the forward-correct fix; it also removes the `Doctrine\ORM\Proxy\Autoloader` deprecation (`about` now boots with zero deprecations). Alternative considered and **not** taken at the time: constraining `symfony/var-exporter` to `7.4.*`, which treats the symptom and leaves the rest of the 8.1 drift in place — that is a dependency decision for the orchestrator, not the implementer. **→ RESOLVED, NOT ACCEPTED (correction step C-1).** The user took the dependency decision: all 13 transitives are now pinned to `7.4.*`, `symfony/var-exporter` is back on v7.4.18, `LazyGhostTrait` exists again, and `enable_native_lazy_objects: true` was **removed** from `config/packages/doctrine.yaml`. The root cause replaced the workaround; the file now matches the plan's primary shape verbatim and this deviation no longer exists in the tree. |
 | 5 (D-3) | Verify with `php bin/console doctrine:migrations:status` exiting 0 and reporting the migrations directory; the plan states it "reads configuration only and must not require a live database" | Verified with `php bin/console debug:config doctrine_migrations` (exit 0, reports `Storyteller\Migrations: <project>/migrations`) plus `ls migrations` showing zero migration classes | The plan's premise is incorrect for `doctrine/migrations` 3.9.8: `status` (and `list`) read the executed-migrations table through `TableMetadataStorage`, so they open a connection. With the D-2 fix in place the command fails with `SQLSTATE[08006] could not translate host name "postgres"` (exit 7), i.e. purely for want of a database. No PostgreSQL exists in this batch — Docker/Compose is step 11, in a later batch — so the command cannot exit 0 here under any permitted config. **Acceptance criterion 16 is left open for the tester to re-run in the container after step 11.** |
 
 ### Observations that are not deviations
@@ -164,7 +213,9 @@
   `dependency-injection`, `console` and `runtime` are all on 7.4.21 as the plan's
   verification demands — but `var-exporter` 8.1 is exactly what caused D-2, so this is a
   standing source of further surprises for a "Symfony 7.4 LTS" skeleton. Flagged for the
-  reviewer; no constraint was changed, since changing one is a plan-level decision.
+  reviewer; no constraint was changed in batch 1, since changing one is a plan-level
+  decision. **→ Resolved by correction step C-1**: the thirteen are pinned to `7.4.*` and no
+  Symfony package is on the 8.x line any more.
 - A local, unrelated PostgreSQL happens to listen on `localhost:5432`. It is irrelevant:
   the application DSN targets host `postgres`, which does not resolve on the host, so the
   "no reachable database" condition of criterion 15 genuinely holds.
@@ -180,16 +231,21 @@ composer deptrac  -> NOT RUN - deptrac.yaml is step 9 (batch 2)
 composer qa       -> NOT DEFINED - step 10 (batch 2)
 ```
 
+> Re-verified unchanged after correction step C-1: `composer test` → 4 tests, 19 assertions, OK.
+
 Supporting verifications: `composer validate --strict` exit 0 · `php bin/console about`
 exit 0 (Symfony v7.4.21 LTS, PHP 8.5.3, no database, no deprecations) ·
 `git status --porcelain` empty after every commit.
 
 ## Left for the tester / reviewer
 
-- **Decide on D-2 and D-1.** Both are small and documented, but both contradict the plan's
-  verbatim file contents and should be explicitly accepted or re-routed.
-- **Decide whether the Symfony 8.1 transitive drift is acceptable** for a 7.4 LTS skeleton,
-  or whether a later batch should pin the Symfony component set.
+- **D-2 is closed** — resolved by correction step C-1, not accepted; the key is gone from
+  `config/packages/doctrine.yaml`. **D-1 still needs an explicit decision**: it contradicts the
+  plan's verbatim `autoload.psr-4` map and is deliberately kept, because without it the Kernel
+  cannot be autoloaded.
+- The Symfony 8.1 transitive drift is **settled**: correction step C-1 pinned the component
+  set to 7.4. What is left for the reviewer is the returned `Doctrine\ORM\Proxy\Autoloader`
+  deprecation notice (harmless, `about` still exits 0, moot on ORM 4).
 - **Acceptance criterion 16 is unverified**: `bin/console doctrine:migrations:status`
   needs the container from step 11 and a healthy `postgres` service. Re-run it there.
 - Criteria 1–5, 7–11, 13 (`.gitkeep` tracking is done, but the gates that check it are

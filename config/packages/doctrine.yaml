@@ -8,12 +8,6 @@ doctrine:
 
     orm:
         auto_generate_proxy_classes: true
-        # doctrine/orm 3.7 falls back to Symfony's LazyGhostTrait when native lazy
-        # objects are off, but symfony/var-exporter resolved onto the 8.1 line, which
-        # removed that trait - every real EntityManager instantiation then throws
-        # ORMInvalidArgumentException::lazyGhostUnavailable(). PHP 8.5 has native lazy
-        # objects, and ORM 4.0 makes them mandatory. See step 5 in 03-implementation-notes.md.
-        enable_native_lazy_objects: true
         # The entire R1 mitigation: auto_mapping would point a mapping driver at a
         # non-existent src/Entity and throw during container compilation.
         auto_mapping: false
