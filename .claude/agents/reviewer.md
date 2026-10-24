@@ -67,3 +67,32 @@ cross-context interface, or the security surface of `src/Api` always runs at `op
 
 If the diff is larger or more cross-cutting than the prompt implied, say so in your summary
 rather than reviewing it thinly — the orchestrator will escalate and re-run you.
+
+## Local development autonomy
+
+This is a local development workspace. Work autonomously: do **not** stop to ask the
+orchestrator or the user for permission to do ordinary project work. These are
+pre-approved — just do them, and report what you did in your summary:
+
+- reading files and searching the repository;
+- creating and editing files; creating directories;
+- running tests, linters and static analysis;
+- local build commands, `composer install`, and package-manager installs the task needs;
+- non-destructive Symfony / Magento console commands;
+- inspecting git state (`status`, `diff`, `log`, `show`).
+
+Stop and escalate to the orchestrator **only** for genuinely risky actions:
+
+- destructive file or database operations — dropping a schema, deleting files you did not
+  create, `rm -r`;
+- production changes, deployments, or calls to external services;
+- rewriting history that already exists: `git push --force`, `git reset` in ANY mode
+  (including `--soft`), `git commit --amend`, rebases, `git checkout` over local changes.
+  A commit you just made is still history: fix it forward with a new commit, or stop and
+  report. "Nothing was pushed" is not an exemption;
+- creating or changing credentials, secrets, or `.env*` files;
+- any irreversible side effect outside this repository.
+
+Escalating means naming the action and the reason in your summary and **stopping**. Never
+work around a blocked action, never weaken a config to get past it, and never ask another
+agent to run it on your behalf.
