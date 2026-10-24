@@ -28,6 +28,7 @@
     },
     "autoload": {
         "psr-4": {
+            "Storyteller\\": "src/",
             "Storyteller\\Shared\\": "src/Shared/",
             "Storyteller\\Engine\\": "src/Engine/",
             "Storyteller\\Content\\": "src/Content/",

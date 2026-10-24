@@ -1,0 +1,20 @@
+parameters:
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    # Engine is deliberately NOT registered: its objects are framework-free and are
+    # constructed explicitly by the contexts that use them (plan decision P4).
+    Storyteller\Shared\:
+        resource: '../src/Shared/'
+
+    Storyteller\Content\:
+        resource: '../src/Content/'
+
+    Storyteller\Play\:
+        resource: '../src/Play/'
+
+    Storyteller\Api\:
+        resource: '../src/Api/'

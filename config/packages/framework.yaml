@@ -1,0 +1,19 @@
+framework:
+    secret: '%env(APP_SECRET)%'
+    http_method_override: false
+    handle_all_throwables: true
+    php_errors:
+        log: true
+    validation:
+        enabled: true
+        email_validation_mode: html5
+    serializer:
+        enabled: true
+    uid:
+        default_uuid_version: 7
+        time_based_uuid_version: 7
+
+when@test:
+    framework:
+        # Required for KernelTestCase::getContainer() to return the test container.
+        test: true
