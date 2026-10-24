@@ -13,6 +13,11 @@
 > the `qa` script, Docker, Makefile, README, the `CLAUDE.md` line-3 edit) remain for later
 > batches.
 
+> **Batch 3 — step 9 only**, run on `opus` per the plan's routing table (`deptrac.yaml` *is*
+> the cross-context dependency contract). Step 10 (the aggregate `qa` script) and steps
+> 11–14 (Docker, Makefile, README, the `CLAUDE.md` line-3 edit) are deliberately not
+> implemented here.
+
 ## Progress
 
 | Step | Status | Commit |
@@ -27,7 +32,8 @@
 | 7. Add PHPStan level 8 | done | `build: add PHPStan level 8 configuration` |
 | 8. Add php-cs-fixer and format the tree | done (1 finding, not a deviation) | `build: enforce PSR-12 and strict types with php-cs-fixer` |
 | C-2. Untrack and exclude `config/reference.php` (correction, post-batch-2) | done | `build: untrack and exclude the generated config reference dump` |
-| 9.–14. | not started (later batches) | — |
+| 9. Encode the dependency rule in deptrac | done (0 deviations, 1 finding) | `build: encode the bounded-context dependency rule in deptrac` |
+| 10.–14. | not started (later batches) | — |
 
 ## Step log
 
@@ -267,6 +273,116 @@ resolved and retires deviation D-2.
     untracking it, or by excluding it from the cs-fixer finder with a recorded plan
     decision. Recommend the orchestrator decide before step 10 is implemented.
 
+### Step 9 — Encode the bounded-context dependency rule in deptrac
+
+- **Changed:** `deptrac.yaml` (new) — the plan's verbatim content from
+  §"Exact file contents → `deptrac.yaml`", byte-for-byte, including the two explanatory
+  comment blocks. Deptrac v4 top-level `deptrac:` key; the installed package is
+  `deptrac/deptrac` 4.7.2 (not the stale `qossmic/deptrac`).
+- **Shape:** `paths: [./src]`; five context layers (`Shared`, `Engine`, `Content`, `Play`,
+  `Api`) built with `directory` collectors; one `Framework` vendor layer built with the
+  `composer` collector over 26 packages. Ruleset: `Shared: []`, `Engine: [Shared]`,
+  `Content: [Engine, Shared, Framework]`, `Play: [Engine, Content, Shared, Framework]`,
+  `Api: [Play, Content, Shared, Framework]`, `Framework: []`. `Api -> Engine` is absent by
+  design; `Framework` is withheld from **both** `Engine` and `Shared` (plan decision P3).
+- **Tests added:** none — config-only step, no `src/` file changed, standing rule 1 not
+  engaged. The architecture invariant is additionally covered from the test side by
+  step 6's `tests/Unit/Shared/BoundedContextLayoutTest.php`.
+- **Pre-flight checks against the installed deptrac (no key was invented):**
+  - Top-level key confirmed as `deptrac` from
+    `vendor/deptrac/deptrac/src/Supportive/DependencyInjection/Configuration.php`
+    (`new TreeBuilder('deptrac')`).
+  - The `composer` collector's key spelling (`composerPath`, `composerLockPath`,
+    `packages`) confirmed from
+    `vendor/deptrac/deptrac/src/DefaultBehavior/Layer/ComposerCollector.php` and
+    `src/Contract/Config/Collector/ComposerConfig.php`. No correction was needed.
+  - All **26** package names were verified present in `composer.lock` before the file was
+    written (`ComposerFilesParser::autoloadableNamespacesForRequirements()` throws on an
+    unknown package). None had to be deleted; none was added; no wildcard was used.
+- **Checks:** `composer deptrac` → exit 0 · `composer test` → exit 0 (4 tests, 19
+  assertions) · `composer phpstan` → exit 0, "No errors" at level 8 ·
+  `vendor/bin/php-cs-fixer fix --dry-run --diff` → exit 0 ("Found 0 of 8 files") ·
+  `composer validate --strict` → exit 0. `deptrac.yaml` is not a PHP file, so the cs-fixer
+  finder does not see it.
+- **Verification (plan's own):** `composer deptrac` exit 0; `grep -c 'Framework'
+  deptrac.yaml` → **5** (the layer name, the comment, the collector block and three ruleset
+  entries land on five matching lines), confirming the D4 vendor layer is present.
+- **Verification that the ruleset actually bites — the important one.** The plan accepts
+  green-by-vacancy (D4/R3), so exit 0 on the real tree proves only that the config parses
+  (`Violations 0 / Uncovered 0 / Allowed 0`, one file analysed: `src/Kernel.php`). The rule
+  was therefore proved with throwaway probe classes, run and then deleted, never committed:
+
+  | Probe (deleted) | Dependency | Expected | Observed |
+  |---|---|---|---|
+  | `src/Engine/ThrowawayDeptracProbe.php` | `Doctrine\ORM\EntityManagerInterface`, `Symfony\Component\HttpFoundation\Request` | forbidden (P3: `Engine` has no `Framework` edge) | 2 violations, exit 1 |
+  | `src/Engine/ThrowawayEngineProbe.php` | `Storyteller\Content\Domain\ThrowawayContent` | forbidden (no `Engine -> Content` edge) | violation, exit 1 |
+  | `src/Api/Controller/ThrowawayApiProbe.php` | `Storyteller\Engine\ThrowawayEngineProbe` | forbidden (`Api -> Engine` deliberately absent) | violation, exit 1 |
+  | `src/Play/Application/ThrowawayPlayProbe.php` | `Storyteller\Engine\…` + `Storyteller\Content\…` | **allowed** (positive control) | reported under `Allowed 2`, no violation |
+
+  Exact violation text from run 1 (P3, the `Framework` exclusion):
+
+  ```
+  DependsOnDisallowedLayer   Storyteller\Engine\ThrowawayDeptracProbe must not depend on Doctrine\ORM\EntityManagerInterface
+                             You are depending on token that is a part of a layer that you are not allowed to depend on. (Framework)
+                             /Users/aleksandrkopyl/www/storyteller/src/Engine/ThrowawayDeptracProbe.php:12
+  DependsOnDisallowedLayer   Storyteller\Engine\ThrowawayDeptracProbe must not depend on Symfony\Component\HttpFoundation\Request
+                             You are depending on token that is a part of a layer that you are not allowed to depend on. (Framework)
+                             /Users/aleksandrkopyl/www/storyteller/src/Engine/ThrowawayDeptracProbe.php:16
+  ```
+
+  Exact violation text from run 2 (the two context edges):
+
+  ```
+  DependsOnDisallowedLayer   Storyteller\Api\Controller\ThrowawayApiProbe must not depend on Storyteller\Engine\ThrowawayEngineProbe
+                             You are depending on token that is a part of a layer that you are not allowed to depend on. (Engine)
+                             /Users/aleksandrkopyl/www/storyteller/src/Api/Controller/ThrowawayApiProbe.php:11
+  DependsOnDisallowedLayer   Storyteller\Engine\ThrowawayEngineProbe must not depend on Storyteller\Content\Domain\ThrowawayContent
+                             You are depending on token that is a part of a layer that you are not allowed to depend on. (Content)
+                             /Users/aleksandrkopyl/www/storyteller/src/Engine/ThrowawayEngineProbe.php:11
+  ```
+
+  All four probe files were deleted; `composer deptrac` returned to exit 0 with
+  `Violations 0 / Uncovered 0` and `git status --short` showed no probe file at any point
+  of the commit. **The `Framework` vendor layer is not decorative** — it is the thing that
+  turns `use Doctrine\…` inside `src/Engine` from a silent pass into a violation.
+- **Uncovered-token count: 0.** `vendor/bin/deptrac analyse --report-uncovered` also
+  reports `Uncovered 0` and emits **no warning about `src/Kernel.php`**. That is expected
+  and is R13 working as designed: `Kernel` matches none of the five `directory` collectors,
+  so it belongs to no layer and deptrac never evaluates its dependencies at all (an
+  "uncovered" dependency is one *from* a layered token *to* an unlayered one). No layer was
+  invented for it.
+- **Commit:** `build: encode the bounded-context dependency rule in deptrac` (`13685d4`)
+- **Not touched:** `composer.json` (the `deptrac` script already existed from step 3; the
+  `cs-check`/`qa` scripts are step 10 and were not added), `.gitignore`,
+  `.php-cs-fixer.dist.php`, `CLAUDE.md`. No `skip_violations` key, no baseline, no widened
+  layer. No unscoped `composer update`. No history rewriting.
+
+#### Finding for the orchestrator — `.deptrac.cache` is untracked and must be settled before step 10
+
+Running `composer deptrac` writes a cache file at the project root. Deptrac 4.7.2's config
+default is `cache_file: '.deptrac.cache'`
+(`Configuration::appendCacheFile()`), and `.gitignore` has no entry for it, so every
+`composer deptrac` run leaves `?? .deptrac.cache` in `git status --short`.
+
+This is the same class of problem as `config/reference.php` (correction step C-2), and it
+lands squarely on **step 10's acceptance criterion 11** ("`git status --porcelain` is empty
+after a `composer qa` run"). It is *not* a defect in `deptrac.yaml` and no gate fails today.
+
+I did **not** fix it, because this batch's hard stop-rules forbid touching `.gitignore`, and
+changing `cache_file` would deviate from the plan's verbatim `deptrac.yaml`. The file was
+deleted after the final verification run so the tree is clean, but it reappears on the next
+run. Three options, for the orchestrator to decide before step 10:
+
+1. Add `/.deptrac.cache` to `.gitignore` (mirrors the C-2 treatment; one line, no config
+   deviation).
+2. Add `cache_file: var/.deptrac.cache` to `deptrac.yaml` — `var/` is already ignored; this
+   is a recorded one-line plan deviation.
+3. Change the `deptrac` composer script to `--no-cache` (slowest; discards the cache
+   benefit entirely).
+
+Option 1 is the recommendation: it matches the precedent already set by C-2 and leaves the
+plan's `deptrac.yaml` byte-for-byte intact.
+
 ## Deviations from the plan
 
 | Step | Planned | Actually done | Why |
@@ -367,6 +483,23 @@ already made by the user: it is not a numbered plan step and does not touch step
   every subsequent `composer test` run, as required — it was never deleted. No history was
   rewritten: this is a new commit on top of the batch-2 commit, not an amend.
 
+## Final check state (end of batch 3, step 9)
+
+```
+composer deptrac           -> PASS exit 0 (Violations 0, Skipped 0, Uncovered 0, Allowed 0,
+                              Warnings 0, Errors 0) -- and PROVEN TO BITE: see the probe
+                              table in step 9; Engine->Framework, Engine->Content and
+                              Api->Engine each produce DependsOnDisallowedLayer and exit 1
+composer test              -> PASS exit 0, 4 tests, 19 assertions, 0 failures/errors/skipped/risky
+composer phpstan           -> PASS exit 0, "No errors" at level 8, no phpstan-baseline.neon
+cs-fixer --dry-run --diff  -> PASS exit 0, "Found 0 of 8 files"
+composer validate --strict -> PASS exit 0
+composer qa                -> NOT DEFINED - step 10 (next batch)
+```
+
+`git status --short` is empty after the step-9 commit, once the generated `.deptrac.cache`
+is removed (see the finding above).
+
 ## Left for the tester / reviewer
 
 - **D-2 is closed** — resolved by correction step C-1, not accepted; the key is gone from
@@ -389,6 +522,17 @@ already made by the user: it is not a numbered plan step and does not touch step
   not), 18 (README) all depend on steps 9–14 and are untouched by this batch; criteria 4, 7,
   8, 9 are now checkable (PHPStan level 8 and PSR-12/strict-types enforcement both exist and
   pass) but the aggregate `qa` script (criterion 4's full form) is still step 10.
-- Not implemented here by instruction: `deptrac.yaml`, the `cs-check`/`qa` scripts,
-  `Dockerfile`, `compose.yaml`, `docker/**`, `Makefile`, `README.md`, and the `CLAUDE.md`
-  line-3 edit.
+- Not implemented in batches 1–2 by instruction: `deptrac.yaml`, the `cs-check`/`qa`
+  scripts, `Dockerfile`, `compose.yaml`, `docker/**`, `Makefile`, `README.md`, and the
+  `CLAUDE.md` line-3 edit. **`deptrac.yaml` landed in batch 3 (step 9).** Still open:
+  the `cs-check`/`qa` scripts (step 10), Docker (11), Makefile (12), README (13) and the
+  `CLAUDE.md` line-3 edit (14).
+- **Batch 3 finding — `.deptrac.cache` is untracked** and will break step 10's criterion 11
+  unless gitignored (or redirected into `var/`). Decision needed before step 10; see the
+  finding under step 9. Recommended: add `/.deptrac.cache` to `.gitignore`.
+- **Green-by-vacancy is no longer the state of knowledge for deptrac.** D4/R3 warned that a
+  passing `composer deptrac` on an empty tree proves nothing. Step 9 closed that gap
+  empirically with four throwaway probe classes (three negative, one positive control),
+  deleted immediately afterwards. The reviewer does not need to re-derive it, but the
+  **tester should re-run the probe once inside the container after step 11**, since the
+  composer collector reads `composer.lock` by relative path.
