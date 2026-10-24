@@ -536,3 +536,171 @@ is removed (see the finding above).
   deleted immediately afterwards. The reviewer does not need to re-derive it, but the
   **tester should re-run the probe once inside the container after step 11**, since the
   composer collector reads `composer.lock` by relative path.
+
+---
+
+> **Batch 4 — steps 10, 11 and 12 only**, run on `opus`. Steps 13 (README) and 14 (the
+> `CLAUDE.md` line-3 edit) are deliberately **not** implemented here; they are routed
+> separately. This section appends to the document; nothing above it was rewritten.
+
+## Progress (batch 4)
+
+| Step | Status | Commit |
+|------|--------|--------|
+| 10. Add the aggregate `qa` script | done (1 folded-in fix) | `build: add aggregate qa composer script` (`e22d41d`) |
+| 11. Add the Docker dev environment | done (2 deviations) | `build: add Docker dev environment (php-fpm 8.5, nginx, postgres 16)` (`dab7be9`) |
+| 12. Add the Makefile targets | done | `build: add Makefile dev targets` (`8224bb1`) |
+
+## Step log (batch 4)
+
+### Step 10 — Add the aggregate `qa` composer script
+
+- **Changed:** `composer.json`, `.gitignore`
+- **Tests added:** none (no `src/**` change; the step adds a script, not behaviour).
+  No `src/Engine` file was touched, so standing rule 1 does not apply.
+- **Checks:**
+  - `composer validate --strict` → exit 0
+  - `composer qa` (host) → exit 0, four gates in order: cs-check (0 of 8 files),
+    phpstan (`[OK] No errors`), deptrac (Violations 0), phpunit (4 tests, 19 assertions)
+  - `git status --porcelain` after `composer qa` → **empty**
+- **Commit:** `build: add aggregate qa composer script`
+- **Notes:**
+  - `scripts.qa` is a JSON **array** (`@cs-check`, `@phpstan`, `@deptrac`, `@test`), so
+    Composer runs them in order and aborts on the first non-zero code. No `&&`, no shell,
+    no `|| true`.
+  - `qa` calls `@cs-check` (`fix --dry-run --diff`), never `@cs-fix` — criterion 11.
+  - **Fail-fast proven, not assumed.** `declare(strict_types=1);` was temporarily removed
+    from `src/Kernel.php`; `composer qa` exited **8** at cs-check and phpstan/deptrac/
+    phpunit never ran. The file was *not* rewritten by the dry run (verified), then
+    restored from a scratchpad copy; `composer qa` returned to exit 0.
+  - **Folded-in fix (user decision, same class as C-2):** `/.deptrac.cache` added to the
+    generated/local block of `.gitignore`, same leading-slash style. `composer deptrac`
+    writes that file at the project root on every run, so without the entry
+    `git status --porcelain` is never empty after `composer qa` and step 10's own
+    criterion 11 cannot hold. `deptrac.yaml` was left **verbatim**: no `cache_file`, no
+    `--no-cache`.
+
+### Step 11 — Add the Docker dev environment
+
+- **Changed:** `Dockerfile`, `compose.yaml`, `docker/php/php.ini`,
+  `docker/nginx/default.conf`, `phpunit.xml` (see deviation D-4)
+- **Tests added:** none (infrastructure only). The existing suite is what verifies the
+  environment: it is executed *inside* the container.
+- **Checks:**
+  - `docker compose build` (with `HOST_UID`/`HOST_GID`) → exit 0
+  - `docker compose up -d` → exit 0; php, nginx and postgres up, **postgres healthy**
+  - `docker compose exec -T php php -v` → `PHP 8.5.12 (cli)` with `Zend OPcache v8.5.12`
+  - `docker compose exec -T php php -m` → lists `intl`, `pdo_pgsql`, `pgsql`, `zip`,
+    `Zend OPcache`
+  - `docker compose exec -T php id` → `uid=501(app) gid=20(dialout) groups=20(dialout)`;
+    host is `uid=501 gid=20` — **not root**, and matching
+  - **R9 probe:** the container wrote `var/.r9-probe`; on the host it is owned by
+    `aleksandrkopyl:staff` (501:20). The host appended to it and deleted it **without
+    sudo**, both exit 0.
+  - `docker compose exec -T php composer qa` → exit 0 (R10: dev dependencies are present,
+    so all four `vendor/bin/*` tools exist in the container)
+  - `docker compose exec -T php php bin/console about` → exit 0, Symfony **v7.4.21**, LTS
+- **Commit:** `build: add Docker dev environment (php-fpm 8.5, nginx, postgres 16)`
+- **Notes:**
+  - **Acceptance criterion 16 is now verified** (it could not be on the host, where
+    `postgres` does not resolve):
+    `docker compose exec -T php php bin/console doctrine:migrations:status` → **exit 0**,
+    reporting `Migration Namespaces | Storyteller\Migrations | /app/migrations`, with
+    `Migrations / Available = 0` and `Versions / Current = 0`. The command does open a
+    connection (it reads `doctrine_migration_versions`), which is why it needs the healthy
+    `postgres` service — `make qa` still does not, and the suite still passes with postgres
+    stopped.
+  - The harmless `Doctrine\ORM\Proxy\Autoloader` deprecation notice carried over from
+    step 5 is still emitted by `bin/console` in the container; `about` still exits 0.
+  - The file is named `compose.yaml` (plan §Exact file contents, R14), not
+    `docker-compose.yml`; there is no top-level `version:` key.
+  - No `composer install` runs in the image: `vendor/` comes from the bind mount, which is
+    what keeps `composer.lock` authoritative and the image cheap (plan).
+  - Bare `docker compose build` / `up -d` (without the `HOST_UID=$(id -u)
+    HOST_GID=$(id -g)` prefix) falls back to the documented `:-1000` defaults and would
+    *not* match a macOS host user. All verification used the prefixed form, which is
+    exactly what `make build` / `make up` do. This is a README point for step 13.
+
+### Step 12 — Add the Makefile dev targets
+
+- **Changed:** `Makefile`
+- **Tests added:** none (infrastructure only).
+- **Checks:**
+  - `make up` → exit 0 (postgres waited on and reported Healthy)
+  - **`make qa` → exit 0** — the feature's acceptance criterion, run inside the container
+  - `make test` → exit 0, `OK (4 tests, 19 assertions)` on PHP 8.5.12
+  - `make sh` → opens an interactive `bash` prompt as `app@<cid>:/app$`;
+    `id` → `uid=501(app) gid=20(dialout) groups=20(dialout)` (matches the host user)
+  - `make down` → exit 0; `docker volume ls` still lists `storyteller_pgdata`
+    (no `-v`, criterion 5)
+  - With the containers down, `make qa`, `make test` and `make sh` each print
+    `php container is not running - run 'make up' first` and exit **2** (non-zero) —
+    the `guard-running` target from D8
+- **Commit:** `build: add Makefile dev targets`
+- **Notes:** build args are `HOST_UID`/`HOST_GID`, never `UID` (read-only in bash).
+  `exec -T` is used for `test`/`qa` so the exit code propagates; `sh` keeps the TTY.
+
+## Deviations from the plan (batch 4)
+
+| Step | Planned | Actually done | Why |
+|------|---------|---------------|-----|
+| 10 | `.gitignore` unchanged (it was finalised in step 1 / C-2) | Added `/.deptrac.cache` to the generated/local block | Explicit user decision folded into step 10, and required by step 10's own criterion 11: `composer deptrac` writes `.deptrac.cache` at the project root on every run, so `git status --porcelain` is otherwise never empty after `composer qa`. Recommended as a finding at the end of batch 3. `deptrac.yaml` left verbatim. |
+| 11 | `docker-php-ext-install -j"$(nproc)" pdo_pgsql pgsql intl zip opcache` | `… pdo_pgsql pgsql intl zip` (opcache dropped, with a comment above the `RUN`) | **The plan's Dockerfile does not build.** `php:8.5.12-fpm` already ships Zend OPcache compiled into the binary, so the ext build produces no shared module and `make install` dies with `cp: cannot stat 'modules/*'`. Isolated empirically: `pgsql`, `intl` and `zip` each build fine; only `opcache` fails. OPcache is still present (`php -m` lists `Zend OPcache`) and still tuned by `docker/php/php.ini`, so no capability is lost. No check was weakened. |
+| 11 | `phpunit.xml` unchanged (step 6 file) | Added `<env name="APP_ENV" value="test" force="true"/>` and `<env name="APP_DEBUG" value="1" force="true"/>` alongside the existing `<server>` entries | `compose.yaml`'s `env_file: .env` (plan-mandated) puts a **real** `APP_ENV=dev` in the container's process environment. `KernelTestCase::createKernel()` reads `$_ENV['APP_ENV']` *before* `$_SERVER['APP_ENV']`, so phpunit.xml's `<server>` entries were ignored and the suite booted the **dev** kernel in the container: `composer qa` failed with `Could not find service "test.service_container"` and `Failed asserting that 'test' is identical to 'dev'`. Fixed at the test-suite layer rather than by deleting `env_file`, so `compose.yaml` stays verbatim and the suite is hermetic against *any* ambient `APP_ENV` (a developer's exported var, CI, …). No test was relaxed, skipped or deleted; the same 4 tests / 19 assertions pass on host and in container. |
+| 11 | `docker compose build` / `up -d` plain | Ran as `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose …` | Not a content change — the plan's own step-11 verification line and the Makefile recipes use this prefix. Without it Compose falls back to the `:-1000` defaults and the container user would not match the macOS host user (501:20), defeating R9. |
+
+Environment note, not a deviation: the Docker daemon was not running at the start of the
+batch. OrbStack (already installed on this machine) was started with `open -a OrbStack`;
+`docker info` then returned 0. Nothing was installed and no configuration was changed.
+
+## Final check state (end of batch 4, steps 10–12)
+
+Host:
+
+```
+composer qa                -> PASS exit 0  (cs-check 0/8 · phpstan "No errors" · deptrac
+                              Violations 0 · phpunit 4 tests, 19 assertions)
+composer validate --strict -> PASS exit 0
+git status --porcelain     -> EMPTY after composer qa (the /.deptrac.cache entry)
+```
+
+Container (the acceptance criterion):
+
+```
+docker compose build       -> PASS exit 0
+docker compose up -d       -> PASS exit 0, postgres healthy
+make qa                    -> PASS exit 0   <-- acceptance criterion
+make test                  -> PASS exit 0, OK (4 tests, 19 assertions)
+make sh                    -> PASS, bash as uid=501(app) gid=20 (matches host)
+make down                  -> PASS exit 0, storyteller_pgdata volume still present
+make qa (containers down)  -> guard error, exit 2 (correctly non-zero)
+bin/console about          -> PASS exit 0, Symfony v7.4.21 LTS
+doctrine:migrations:status -> PASS exit 0, Storyteller\Migrations -> /app/migrations,
+                              0 available  (acceptance criterion 16 now verified)
+php -v / php -m            -> PHP 8.5.12, pdo_pgsql pgsql intl zip Zend OPcache
+```
+
+R9 after the container run: `git status --porcelain` empty, and
+`find . -user root -not -path './vendor/*'` returns nothing.
+
+## Left for the tester / reviewer (batch 4)
+
+- **Steps 13 and 14 are not done** and were explicitly out of this batch: `README.md`
+  (criterion 18's README clause, plus the `HOST_UID`/`HOST_GID` override note) and the
+  `CLAUDE.md` line-3 platform string.
+- **Review the two step-11 deviations deliberately.** The `opcache` drop is forced (the
+  image cannot build otherwise) but changes the plan's verbatim Dockerfile. The
+  `phpunit.xml` `<env>` addition touches a step-6 file; the alternative was deleting
+  `env_file: .env` from `compose.yaml`, which would have diverged from the plan's verbatim
+  Compose content instead. Either is defensible — the chosen one is the more hermetic.
+- **Criterion 4 is fully met**: `make qa` exits 0 inside the container and its output shows
+  cs-fixer `--dry-run`, phpstan, deptrac and phpunit in that order, with fail-fast proven
+  by the deliberate break in step 10.
+- **Criterion 16 is now closed** — see the step-11 log. Note it *does* need a healthy
+  postgres (it reads the migration versions table); `make qa` still does not.
+- The batch-3 recommendation stands: **re-run the deptrac violation probe inside the
+  container** once, since the composer collector reads `composer.lock` by relative path.
+  Deptrac ran green in the container (`Violations 0`, `Errors 0`), which proves the config
+  parses and the lock file resolves there, but not that it bites there.
+- No history was rewritten in this batch: no `git reset`, no `--amend`, no rebase.
+  `config/reference.php` is still untracked and appears in none of the three commits.
