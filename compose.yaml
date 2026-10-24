@@ -36,7 +36,11 @@ services:
       POSTGRES_USER: storyteller
       POSTGRES_PASSWORD: storyteller
     ports:
-      - "5432:5432"
+      # Loopback-only: the dev database must not be reachable from other hosts on an
+      # untrusted network. The port stays published so a host-side psql or GUI client
+      # still works; the storyteller/storyteller credentials are a dev convenience that
+      # is only safe because this socket is not exposed beyond 127.0.0.1.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
