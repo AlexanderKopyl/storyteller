@@ -704,3 +704,40 @@ R9 after the container run: `git status --porcelain` empty, and
   parses and the lock file resolves there, but not that it bites there.
 - No history was rewritten in this batch: no `git reset`, no `--amend`, no rebase.
   `config/reference.php` is still untracked and appears in none of the three commits.
+
+---
+
+### Correction C-3 — Bind the dev database to loopback only (post-step-11, batch 4)
+
+- **Changed:** `compose.yaml` (the `postgres` service's `ports:` entry only)
+- **Trigger:** a security review of the step-11 compose file, raised by the coordinator
+  after step 11 was already committed.
+- **Planned:** `ports: - "5432:5432"` (plan §Exact file contents, verbatim)
+- **Actually done:** `ports: - "127.0.0.1:5432:5432"`, with a comment explaining why
+- **Why:** `"5432:5432"` publishes Postgres on **every** host interface, so on a shared or
+  untrusted network (café wifi, a conference LAN) the dev database is reachable from other
+  machines — and the credentials are `storyteller`/`storyteller`/`storyteller`. Those
+  credentials are a fine dev convenience behind a loopback-only socket and not fine behind
+  an exposed one. This is an **authorized** deviation from the plan's verbatim
+  `compose.yaml`, deliberate rather than drift.
+- **Scope, deliberately minimal:**
+  - the port stays **published** — a host-side `psql` or GUI client against the dev
+    database is a reasonable thing to want, so the `ports:` block was not dropped;
+  - the `storyteller`/`storyteller`/`storyteller` credentials are **unchanged**, so they
+    stay consistent with `.env.example` and the README of step 13;
+  - `nginx`'s `"8080:80"` is **left alone**: it is meant to be reachable and carries no
+    data. It is the only other published port in the file.
+- **Checks after the change:**
+  - `docker compose config` → exit 0
+  - `make up` → exit 0; `docker compose ps` shows
+    `postgres  Up (healthy)  127.0.0.1:5432->5432/tcp` and
+    `nginx  Up  0.0.0.0:8080->80/tcp` (unchanged)
+  - `docker compose port postgres 5432` → `127.0.0.1:5432`
+  - **`make qa` → exit 0**, `OK (4 tests, 19 assertions)` — the acceptance criterion
+    re-verified after the change
+  - `php bin/console doctrine:migrations:status` → exit 0,
+    `Storyteller\Migrations -> /app/migrations`, `Available 0` (criterion 16 still holds;
+    the app reaches Postgres over the Compose network, not the published port)
+- **Commit:** `build: bind the dev database to loopback only` (`14bafa8`)
+- **Notes:** fixed **forward** on top of the step-11 commit — no `git commit --amend`, no
+  `git reset`, no rebase, exactly as instructed.
