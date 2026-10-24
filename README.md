@@ -39,8 +39,8 @@ healthy. `make qa` then runs the full quality-gate suite inside the container.
 | `make down`  | Stop the containers. Does **not** pass `-v`, so the `pgdata` volume — and the dev database it holds — survives. |
 
 `sh`, `test` and `qa` depend on a `guard-running` check: if the `php` container is not
-running, they print `php container is not running - run 'make up' first` and exit `2`
-instead of failing with a confusing Docker error.
+running, they print `php container is not running - run 'make up' first` and exit
+non-zero instead of failing with a confusing Docker error.
 
 ### The `HOST_UID` / `HOST_GID` build arguments
 
