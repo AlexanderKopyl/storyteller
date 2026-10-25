@@ -50,7 +50,8 @@ final readonly class Transition
     /**
      * @param  int                         $turn the caller's turn counter; the Engine never reads a clock
      * @throws UnknownSceneException       if the current scene, or any scene reached from it, is unknown
-     * @throws ChoiceUnavailableException  if the choice does not exist or its condition does not hold
+     * @throws ChoiceUnavailableException  if the choice does not exist (`reason` is `NotFound`) or its
+     *                                     condition does not hold (`reason` is `ConditionFailed`)
      * @throws NoNextSceneException        if no `next` rule matched
      * @throws RedirectLoopException       if the turn spent more than MAX_REDIRECTS redirects
      */

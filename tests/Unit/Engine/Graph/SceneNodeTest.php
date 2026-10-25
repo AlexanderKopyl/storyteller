@@ -7,6 +7,7 @@ namespace Storyteller\Tests\Unit\Engine\Graph;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Storyteller\Engine\Exception\ChoiceUnavailableException;
+use Storyteller\Engine\Exception\ChoiceUnavailableReason;
 use Storyteller\Engine\Exception\MalformedNodeException;
 use Storyteller\Engine\Graph\NextRule;
 use Storyteller\Engine\Graph\SceneNode;
@@ -69,10 +70,16 @@ final class SceneNodeTest extends TestCase
         self::assertFalse($scene->hasChoice('west'));
         self::assertSame('north', $scene->choice('north')->key);
 
-        $this->expectException(ChoiceUnavailableException::class);
-        $this->expectExceptionMessage('west');
-
-        $scene->choice('west');
+        try {
+            $scene->choice('west');
+            self::fail('Expected a ChoiceUnavailableException for an absent choice key.');
+        } catch (ChoiceUnavailableException $exception) {
+            // M5: the reason is the discriminator, not the English message —
+            // "no such choice" is a client or content bug, and an Api must be
+            // able to tell it from a legitimately locked choice.
+            self::assertSame(ChoiceUnavailableReason::NotFound, $exception->reason);
+            self::assertStringContainsString('west', $exception->getMessage());
+        }
     }
 
     public function testDuplicateChoiceKeysAreRejected(): void

@@ -10,6 +10,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use Storyteller\Engine\Exception\ChoiceUnavailableException;
+use Storyteller\Engine\Exception\ChoiceUnavailableReason;
 use Storyteller\Engine\Exception\EngineException;
 use Storyteller\Engine\Exception\MalformedNodeException;
 use Storyteller\Engine\Exception\NoNextSceneException;
@@ -28,6 +29,7 @@ use Storyteller\Engine\State\VariableType;
  */
 #[CoversClass(EngineException::class)]
 #[CoversClass(ChoiceUnavailableException::class)]
+#[CoversClass(ChoiceUnavailableReason::class)]
 #[CoversClass(MalformedNodeException::class)]
 #[CoversClass(NoNextSceneException::class)]
 #[CoversClass(RedirectLoopException::class)]
@@ -57,6 +59,16 @@ final class EngineExceptionTest extends TestCase
         UnknownSceneException::class,
         UnknownVariableException::class,
     ];
+
+    /**
+     * Files in `src/Engine/Exception` that are part of the family but are not
+     * themselves exceptions — today, the one enum that discriminates
+     * `ChoiceUnavailableException`'s two cases. Listing them keeps the
+     * directory guard below honest instead of merely loosening it.
+     *
+     * @var list<string>
+     */
+    private const array FAMILY_SUPPORT_TYPES = ['ChoiceUnavailableReason'];
 
     /**
      * The only non-Engine ancestors an Engine exception may have.
@@ -98,6 +110,37 @@ final class EngineExceptionTest extends TestCase
         self::assertTrue($reflection->isFinal(), sprintf('%s must be final.', $class));
     }
 
+    /**
+     * M5: the two cases must be distinguishable by something a caller can
+     * branch on. "No such choice" is a client or content bug (an Api answers
+     * 404/422 and should not retry); "the choice exists but its condition is
+     * false" is a state conflict (409, and legitimately racy if two turns are
+     * submitted concurrently). Matching `getMessage()` is not an interface.
+     */
+    public function testChoiceUnavailableCarriesATypedReasonPerCase(): void
+    {
+        self::assertSame(
+            ChoiceUnavailableReason::NotFound,
+            ChoiceUnavailableException::notFound('crossroads', 'north')->reason,
+        );
+        self::assertSame(
+            ChoiceUnavailableReason::ConditionFailed,
+            ChoiceUnavailableException::conditionFailed('crossroads', 'north')->reason,
+        );
+    }
+
+    public function testTheChoiceUnavailableReasonHasExactlyTheTwoDeclaredCases(): void
+    {
+        $values = array_map(
+            static fn (ChoiceUnavailableReason $reason): string => $reason->value,
+            ChoiceUnavailableReason::cases(),
+        );
+
+        // The wire form is pinned as well as the case list: Api will map these
+        // onto status codes, so a rename is a breaking change, not a tidy-up.
+        self::assertSame(['not_found', 'condition_failed'], $values);
+    }
+
     public function testTheRootIsAbstractAndIsTheOnlyAbstractExceptionInTheFamily(): void
     {
         $root = new ReflectionClass(EngineException::class);
@@ -132,7 +175,7 @@ final class EngineExceptionTest extends TestCase
 
         sort($names);
 
-        $expected = ['EngineException'];
+        $expected = ['EngineException', ...self::FAMILY_SUPPORT_TYPES];
 
         foreach (self::CONCRETE_EXCEPTIONS as $class) {
             $expected[] = (new ReflectionClass($class))->getShortName();

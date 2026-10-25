@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Storyteller\Tests\Unit\Engine;
 
+use Closure;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Storyteller\Engine\ConditionEvaluator;
 use Storyteller\Engine\EffectApplier;
 use Storyteller\Engine\Event\EngineEvent;
 use Storyteller\Engine\Exception\ChoiceUnavailableException;
+use Storyteller\Engine\Exception\ChoiceUnavailableReason;
 use Storyteller\Engine\Exception\NoNextSceneException;
 use Storyteller\Engine\Exception\RedirectLoopException;
 use Storyteller\Engine\Exception\UnknownSceneException;
@@ -141,28 +143,74 @@ final class TransitionTest extends TestCase
         self::assertSame(['choice_made', 'scene_entered'], self::names($result));
     }
 
-    public function testAChoiceWhoseConditionIsFalseThrows(): void
+    /**
+     * M5: a locked choice is a state conflict — the choice exists, the player
+     * just may not take it right now — and a caller must be able to tell it
+     * from "no such choice" by type rather than by matching English prose.
+     */
+    public function testAChoiceWhoseConditionIsFalseThrowsWithTheConditionFailedReason(): void
     {
-        $this->expectException(ChoiceUnavailableException::class);
-        $this->expectExceptionMessage('north');
-
-        $this->transition([
+        $exception = $this->expectChoiceUnavailable(fn (): TransitionResult => $this->transition([
             [
                 'key' => 'a',
                 'choices' => [['key' => 'north', 'condition' => ['op' => 'flag', 'flag' => 'brave']]],
                 'next' => 'b',
             ],
             ['key' => 'b'],
-        ])->run($this->state(), 'a', 'north', 1);
+        ])->run($this->state(), 'a', 'north', 1));
+
+        self::assertSame(ChoiceUnavailableReason::ConditionFailed, $exception->reason);
+        self::assertStringContainsString('north', $exception->getMessage());
     }
 
-    public function testAChoiceKeyAbsentFromTheSceneThrows(): void
+    public function testAChoiceKeyAbsentFromTheSceneThrowsWithTheNotFoundReason(): void
     {
-        $this->expectException(ChoiceUnavailableException::class);
-        $this->expectExceptionMessage('west');
+        $exception = $this->expectChoiceUnavailable(
+            fn (): TransitionResult => $this->transition([
+                ['key' => 'a', 'choices' => [['key' => 'north']], 'next' => 'a'],
+            ])->run($this->state(), 'a', 'west', 1),
+        );
 
-        $this->transition([['key' => 'a', 'choices' => [['key' => 'north']], 'next' => 'a']])
-            ->run($this->state(), 'a', 'west', 1);
+        self::assertSame(ChoiceUnavailableReason::NotFound, $exception->reason);
+        self::assertStringContainsString('west', $exception->getMessage());
+    }
+
+    /**
+     * The two reasons are not interchangeable: the same scene, two different
+     * choice keys, two different reasons.
+     */
+    public function testTheTwoUnavailableReasonsAreNotTheSame(): void
+    {
+        $story = [
+            [
+                'key' => 'a',
+                'choices' => [['key' => 'north', 'condition' => ['op' => 'flag', 'flag' => 'brave']]],
+                'next' => 'a',
+            ],
+        ];
+
+        $locked = $this->expectChoiceUnavailable(
+            fn (): TransitionResult => $this->transition($story)->run($this->state(), 'a', 'north', 1),
+        );
+        $missing = $this->expectChoiceUnavailable(
+            fn (): TransitionResult => $this->transition($story)->run($this->state(), 'a', 'west', 1),
+        );
+
+        self::assertNotSame($locked->reason, $missing->reason);
+    }
+
+    /**
+     * @param Closure(): TransitionResult $run
+     */
+    private function expectChoiceUnavailable(Closure $run): ChoiceUnavailableException
+    {
+        try {
+            $run();
+        } catch (ChoiceUnavailableException $exception) {
+            return $exception;
+        }
+
+        self::fail('Expected a ChoiceUnavailableException.');
     }
 
     public function testAnUnknownCurrentSceneThrows(): void

@@ -96,6 +96,7 @@ final class EnginePurityTest extends TestCase
         'Event/EndingReached.php' => 'Event/EngineEventsTest.php',
         'Exception/EngineException.php' => 'Exception/EngineExceptionTest.php',
         'Exception/ChoiceUnavailableException.php' => 'Exception/EngineExceptionTest.php',
+        'Exception/ChoiceUnavailableReason.php' => 'Exception/EngineExceptionTest.php',
         'Exception/MalformedNodeException.php' => 'Exception/EngineExceptionTest.php',
         'Exception/NoNextSceneException.php' => 'Exception/EngineExceptionTest.php',
         'Exception/RedirectLoopException.php' => 'Exception/EngineExceptionTest.php',
