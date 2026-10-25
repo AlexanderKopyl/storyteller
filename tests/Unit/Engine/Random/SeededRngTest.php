@@ -24,12 +24,13 @@ use Storyteller\Engine\Random\SeededRng;
  * also why none of these tests can be flaky: a "random" value here is a fixed
  * value whose number nobody has written down.
  *
- * Deliberately **no golden numbers**: pinning one would freeze an
- * implementation detail of `Random\Engine\Xoshiro256StarStar` rather than the
- * contract. Cross-process reproducibility instead rests on the construction
- * (SHA-256 of the seed triple, feeding a seeded engine) and on
- * `EnginePurityTest`, which forbids every source of process-local entropy
- * anywhere under `src/Engine`.
+ * Within-process purity is the weaker half. The stronger half — the one a
+ * saved game actually depends on — is pinned by
+ * {@see self::testTheGoldenValuesOfTheDocumentedSeedTriplesNeverChange()}:
+ * without literal expected values, every assertion here would still pass if
+ * `Random\Engine\Xoshiro256StarStar` started producing entirely different
+ * numbers, because the suite would merely be comparing the new numbers with
+ * themselves.
  */
 #[CoversClass(SeededRng::class)]
 final class SeededRngTest extends TestCase
@@ -126,6 +127,48 @@ final class SeededRngTest extends TestCase
             self::assertGreaterThanOrEqual(0.0, $value);
             self::assertLessThan(1.0, $value);
         }
+    }
+
+    /**
+     * **M6 — the golden values. A change here is a format break, not a test to
+     * update.**
+     *
+     * A player's save stores a seed and replays draws against it, so
+     * `(seed, turn, index) -> value` is a persisted format in everything but
+     * name. Every other test in this file compares the implementation with
+     * itself and would stay green if a future PHP re-rolled every historical
+     * draw; these literals are the only thing that would go red.
+     *
+     * Recorded on PHP 8.5.3 by running the committed `SeededRng` and printing
+     * the results — see `docs/sdlc/engine-core/05-test-report.md`. If this
+     * test fails after a PHP upgrade, the digest assertion says which half
+     * moved: a changed digest means `hash('sha256', …)`, an unchanged digest
+     * with changed draws means `Xoshiro256StarStar` or `Randomizer`. Either
+     * way, existing saves no longer replay and the fix is a seeding migration,
+     * not a new expected value.
+     */
+    public function testTheGoldenValuesOfTheDocumentedSeedTriplesNeverChange(): void
+    {
+        $rng = new SeededRng(self::SEED);
+
+        // The derivation's own input, so a failure below can be diagnosed
+        // without a debugger: this is the 32-byte engine seed for (turn 1, index 0).
+        self::assertSame(
+            'c0433713bd5a0f31d0990ce24b8793365e4e153e0a8bf2c1f03b23087976e51b',
+            hash('sha256', self::SEED . '|1|0'),
+        );
+
+        self::assertSame(3, $rng->intBetween(1, 0, 1, 6));
+        self::assertSame(29, $rng->intBetween(7, 3, 0, 100));
+        self::assertSame(8603048871373097032, $rng->intBetween(1, 0, 0, PHP_INT_MAX));
+        self::assertSame(-1, $rng->intBetween(42, 9, -10, 10));
+
+        self::assertSame(0.869706102612091, $rng->fraction(1, 0));
+        self::assertSame(0.06122881568830785, $rng->fraction(7, 3));
+
+        // The numeric convenience seed is part of the same format.
+        self::assertSame(3, SeededRng::fromInt(42)->intBetween(1, 0, 1, 6));
+        self::assertSame(0.627412892597092, SeededRng::fromInt(42)->fraction(1, 0));
     }
 
     public function testFromIntProducesAUsableSeed(): void
