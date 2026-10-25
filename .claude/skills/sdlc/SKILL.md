@@ -98,7 +98,7 @@ command whose exit code you will actually check.
 
 Never route any phase to `fable` — not implementation, not review, not test authoring —
 and never on the grounds that it is available or cheap. It is not characterised for this
-codebase's PHP 8.3 / Symfony work or its quality bar. If you believe a step warrants it,
+codebase's PHP 8.5 / Symfony 7.4 LTS work or its quality bar. If you believe a step warrants it,
 ask the user instead of routing to it.
 
 ### Record every decision
