@@ -295,6 +295,33 @@ final class EffectApplierTest extends TestCase
     }
 
     /**
+     * B1: a compiled `{"op":"set","var":"ratio","value":1.0}` node comes back
+     * from the `story_version` snapshot as `value: 1`. It must still apply,
+     * and it must store a real `float`, not the int it arrived as.
+     */
+    public function testASetNodeWithAnIntegralFloatValueSurvivesAJsonRoundTrip(): void
+    {
+        $node = ['op' => 'set', 'var' => 'ratio', 'value' => 2.0];
+
+        $json = json_encode($node, JSON_THROW_ON_ERROR);
+
+        self::assertSame('{"op":"set","var":"ratio","value":2}', $json);
+
+        // No `assertIsArray()` here: the encoded literal is precise enough
+        // that static analysis already proves the decoded shape.
+        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+        $result = $this->applier()->apply($this->effects([$decoded]), $this->state());
+
+        // The declared default is 1.0, so both sides of the diff are floats.
+        self::assertSame(2.0, $result->state->var('ratio'));
+        self::assertSame(
+            ['vars' => ['ratio' => ['from' => 1.0, 'to' => 2.0]]],
+            $result->diff->toArray(),
+        );
+    }
+
+    /**
      * @param  list<array<array-key, mixed>> $nodes
      * @return list<Effect>
      */

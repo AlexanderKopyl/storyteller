@@ -25,9 +25,11 @@ final class VariableTypeTest extends TestCase
     }
 
     /**
-     * The grid is exhaustive on purpose: `Float` does **not** accept an int,
-     * which is what makes "no silent promotion" enforceable later in the
-     * applier.
+     * The grid is exhaustive on purpose, and deliberately asymmetric: `Float`
+     * accepts an int (widening is lossless, and `json_decode` hands back an
+     * int for any float written with a zero fraction), while `Int` still
+     * refuses a float, which is what makes "no silent narrowing" enforceable
+     * later in the applier.
      */
     #[DataProvider('acceptanceGridProvider')]
     public function testAcceptsMatchesTheDeclaredType(
@@ -36,6 +38,23 @@ final class VariableTypeTest extends TestCase
         bool $expected,
     ): void {
         self::assertSame($expected, $type->accepts($value));
+    }
+
+    /**
+     * The single normalisation point behind B1: an int reaching a
+     * `Float`-declared variable becomes a real float, and nothing else is
+     * touched. Narrowing is never performed — a float stays a float even for
+     * an `Int` declaration, so `accepts()` can still refuse it.
+     */
+    #[DataProvider('canonicalisationGridProvider')]
+    public function testCanonicaliseWidensOnlyAnIntIntoAFloatDeclaration(
+        VariableType $type,
+        int|float|string|bool $value,
+        int|float|string|bool $expected,
+    ): void {
+        // `assertSame` on a scalar is `===`, so this pins the PHP type as
+        // well as the value: `1` would not satisfy an expected `1.0`.
+        self::assertSame($expected, $type->canonicalise($value));
     }
 
     #[DataProvider('numericGridProvider')]
@@ -58,9 +77,30 @@ final class VariableTypeTest extends TestCase
 
         foreach (VariableType::cases() as $type) {
             foreach ($values as $label => $value) {
-                yield sprintf('%s accepts %s', $type->value, $label) => [$type, $value, $type->value === $label];
+                // The one deliberate widening: a float declaration also takes
+                // an int, because that is what a float with a zero fraction
+                // comes back as from JSON.
+                $expected = $type->value === $label
+                    || ($type === VariableType::Float && $label === 'int');
+
+                yield sprintf('%s accepts %s', $type->value, $label) => [$type, $value, $expected];
             }
         }
+    }
+
+    /**
+     * @return iterable<string, array{0: VariableType, 1: int|float|string|bool, 2: int|float|string|bool}>
+     */
+    public static function canonicalisationGridProvider(): iterable
+    {
+        yield 'float declaration widens an int' => [VariableType::Float, 1, 1.0];
+        yield 'float declaration widens a negative int' => [VariableType::Float, -3, -3.0];
+        yield 'float declaration widens zero' => [VariableType::Float, 0, 0.0];
+        yield 'float declaration leaves a float alone' => [VariableType::Float, 2.5, 2.5];
+        yield 'int declaration leaves an int alone' => [VariableType::Int, 1, 1];
+        yield 'int declaration never narrows a float' => [VariableType::Int, 1.0, 1.0];
+        yield 'string declaration leaves a string alone' => [VariableType::String, '1', '1'];
+        yield 'bool declaration leaves a bool alone' => [VariableType::Bool, true, true];
     }
 
     /**

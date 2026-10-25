@@ -27,6 +27,15 @@ use Storyteller\Engine\Support\ArrayReader;
  * The state carries no schema and therefore validates no types: `withVar()`
  * stores what it is given. Type enforcement belongs to the applier, which has
  * the schema in hand.
+ *
+ * That has one consequence worth naming, because JSON forces it. `json_encode`
+ * writes a float with a zero fraction as `1`, and `json_decode` reads it back
+ * as an `int`, so a state reloaded from JSONB can carry an `int` under a name
+ * the schema declares `float`. The Engine never reads a variable out of the
+ * state directly — it reads through `VariableSchema::resolve()`, which widens
+ * it back — and the applier only ever writes canonical values, so the two
+ * forms are indistinguishable to every operator. `var()` is the raw view and
+ * reports what is actually stored.
  */
 final readonly class GameState
 {

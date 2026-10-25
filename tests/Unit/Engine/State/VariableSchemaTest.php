@@ -153,6 +153,62 @@ final class VariableSchemaTest extends TestCase
         self::assertEquals($schema, VariableSchema::fromArray($array));
     }
 
+    /**
+     * B1: `json_encode(1.0)` is the string `"1"` and `json_decode("1")` is an
+     * `int`, so a schema whose declared default is an integral float only
+     * survives the `story_version` snapshot if the Engine widens it back.
+     */
+    public function testASchemaWhoseDefaultIsAnIntegralFloatSurvivesAJsonRoundTrip(): void
+    {
+        $schema = VariableSchema::of([new VariableDefinition('ratio', VariableType::Float, 1.0)]);
+
+        $json = json_encode($schema->toArray(), JSON_THROW_ON_ERROR);
+
+        self::assertSame('{"ratio":{"type":"float","default":1}}', $json);
+
+        // No `assertIsArray()` here: the encoded literal is precise enough
+        // that static analysis already proves the decoded shape, and asserting
+        // it again would be an assertion that can never run.
+        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+        $reloaded = VariableSchema::fromArray($decoded);
+
+        self::assertSame(1.0, $reloaded->defaultOf('ratio'));
+        self::assertEquals($schema, $reloaded);
+    }
+
+    public function testCanonicaliseWidensAnIntForAFloatDeclaredVariableOnly(): void
+    {
+        $schema = self::schema();
+
+        self::assertSame(1.0, $schema->canonicalise('ratio', 1));
+        self::assertSame(2.5, $schema->canonicalise('ratio', 2.5));
+        self::assertSame(7, $schema->canonicalise('hp', 7));
+        self::assertSame('ash', $schema->canonicalise('name', 'ash'));
+    }
+
+    public function testCanonicaliseRejectsAnUndeclaredName(): void
+    {
+        $this->expectException(UnknownVariableException::class);
+
+        self::schema()->canonicalise('mana', 1);
+    }
+
+    /**
+     * B1 again, on the read side: a state that came back from JSONB carries a
+     * PHP `int` under a float-declared name, and `resolve()` is the one place
+     * every operator reads a variable, so widening there is what keeps `===`
+     * meaningful.
+     */
+    public function testResolveWidensAnIntCarriedByTheStateForAFloatDeclaredVariable(): void
+    {
+        $schema = self::schema();
+
+        self::assertSame(1.0, $schema->resolve('ratio', GameState::create(['ratio' => 1], [], [], [], [])));
+        self::assertSame(0.5, $schema->resolve('ratio', GameState::create(['ratio' => 0.5], [], [], [], [])));
+        self::assertSame(0.5, $schema->resolve('ratio', GameState::initial()));
+    }
+
     public function testFromArrayRejectsANonObjectDefinition(): void
     {
         $this->expectException(MalformedNodeException::class);

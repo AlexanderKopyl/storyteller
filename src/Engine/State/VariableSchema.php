@@ -106,13 +106,36 @@ final readonly class VariableSchema
      * resolves to the declared default. The result is never null, so no
      * operator has to decide what a missing variable means.
      *
+     * The result is also canonical. `GameState` carries no schema and so
+     * stores whatever it was handed — including the `int` that a float with a
+     * zero fraction becomes on its way through JSONB. Widening here, at the
+     * one place every operator reads a variable, is what keeps `===` an
+     * honest test of equality across a save.
+     *
      * @throws UnknownVariableException if the name is not declared
      */
     public function resolve(string $name, GameState $state): int|float|string|bool
     {
         $definition = $this->definition($name);
 
-        return $state->hasVar($name) ? $state->var($name) : $definition->default;
+        return $definition->type->canonicalise(
+            $state->hasVar($name) ? $state->var($name) : $definition->default,
+        );
+    }
+
+    /**
+     * Normalises a value against its declaration: an `int` destined for a
+     * `float` variable becomes a real `float`, and nothing else changes.
+     *
+     * Call it on anything about to be compared with, or written into, a
+     * declared variable — a condition's literal, an effect's value, an
+     * arithmetic result.
+     *
+     * @throws UnknownVariableException if the name is not declared
+     */
+    public function canonicalise(string $name, int|float|string|bool $value): int|float|string|bool
+    {
+        return $this->typeOf($name)->canonicalise($value);
     }
 
     /**

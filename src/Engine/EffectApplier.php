@@ -79,7 +79,11 @@ final readonly class EffectApplier
     {
         $this->schema->assertAccepts($effect->var, $effect->value);
 
-        return $state->withVar($effect->var, $effect->value);
+        // `GameState` has no schema of its own, so the applier is responsible
+        // for storing a canonical value: an integral float that reached the
+        // AST as an int after a JSON round trip is widened here, once, rather
+        // than leaking an int into a float-declared variable.
+        return $state->withVar($effect->var, $this->schema->canonicalise($effect->var, $effect->value));
     }
 
     private function arithmetic(Arithmetic $effect, GameState $state): GameState
@@ -105,7 +109,7 @@ final readonly class EffectApplier
 
         $this->schema->assertAccepts($name, $result);
 
-        return $state->withVar($name, $result);
+        return $state->withVar($name, $this->schema->canonicalise($name, $result));
     }
 
     private function flag(FlagEffect $effect, GameState $state): GameState

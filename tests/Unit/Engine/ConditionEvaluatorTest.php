@@ -253,6 +253,37 @@ final class ConditionEvaluatorTest extends TestCase
         $this->evaluator()->evaluate($unknown, $this->state());
     }
 
+    /**
+     * B1, the silent variant: the same `eq` node and the same state, once
+     * in-process and once after a trip through JSON. Before the fix the first
+     * answer was `true` and the second `false` — no exception, no log entry, a
+     * different story.
+     */
+    public function testAnEqOnAnIntegralFloatHoldsIdenticallyBeforeASaveAndAfterAReload(): void
+    {
+        $node = ['op' => 'eq', 'var' => 'ratio', 'value' => 1.0];
+        $state = GameState::create(['ratio' => 1.0], [], [], [], []);
+
+        $before = $this->evaluator()->evaluate(Condition::fromArray($node), $state);
+
+        $stateJson = json_encode($state->toArray(), JSON_THROW_ON_ERROR);
+        $nodeJson = json_encode(Condition::fromArray($node)->toArray(), JSON_THROW_ON_ERROR);
+
+        $decodedState = json_decode($stateJson, true, 512, JSON_THROW_ON_ERROR);
+        $decodedNode = json_decode($nodeJson, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertIsArray($decodedState);
+        self::assertIsArray($decodedNode);
+
+        $after = $this->evaluator()->evaluate(
+            Condition::fromArray($decodedNode),
+            GameState::fromArray($decodedState),
+        );
+
+        self::assertTrue($before);
+        self::assertSame($before, $after);
+    }
+
     private function evaluator(): ConditionEvaluator
     {
         return new ConditionEvaluator(VariableSchema::of([

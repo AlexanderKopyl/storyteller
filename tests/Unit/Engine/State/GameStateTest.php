@@ -11,6 +11,9 @@ use PHPUnit\Framework\TestCase;
 use Storyteller\Engine\Exception\MalformedNodeException;
 use Storyteller\Engine\Exception\UnknownVariableException;
 use Storyteller\Engine\State\GameState;
+use Storyteller\Engine\State\VariableDefinition;
+use Storyteller\Engine\State\VariableSchema;
+use Storyteller\Engine\State\VariableType;
 
 /**
  * The state is immutable and canonically ordered, because it is the value that
@@ -211,6 +214,42 @@ final class GameStateTest extends TestCase
 
         self::assertIsArray($decoded);
         self::assertSame($state->toArray(), GameState::fromArray($decoded)->toArray());
+    }
+
+    /**
+     * B1: the full `play_session` cycle. `json_encode(1.0)` writes `1`, so the
+     * reloaded state carries a PHP `int` under `ratio`. The envelope must come
+     * back equal, re-encode to identical bytes, and — read through the schema,
+     * which is the only way the Engine ever reads a variable — hand back a
+     * real `float` again.
+     */
+    public function testAFullStateWithAnIntegralFloatSurvivesAJsonEncodeDecodeCycle(): void
+    {
+        $schema = VariableSchema::of([new VariableDefinition('ratio', VariableType::Float, 0.0)]);
+
+        $state = GameState::initial()
+            ->withVar('ratio', 1.0)
+            ->withFlag('brave')
+            ->withItem('rope', 2)
+            ->withVisit('cave');
+
+        $json = json_encode($state->toArray(), JSON_THROW_ON_ERROR);
+
+        self::assertStringContainsString('"ratio":1', $json);
+
+        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertIsArray($decoded);
+
+        $reloaded = GameState::fromArray($decoded);
+
+        self::assertEquals($state, $reloaded);
+        self::assertSame($json, json_encode($reloaded->toArray(), JSON_THROW_ON_ERROR));
+        self::assertSame(1.0, $schema->resolve('ratio', $reloaded));
+        self::assertSame(
+            $schema->resolve('ratio', $state),
+            $schema->resolve('ratio', $reloaded),
+        );
     }
 
     public function testStateIsIndependentOfTheOrderWithMethodsAreApplied(): void

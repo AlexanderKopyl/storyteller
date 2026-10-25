@@ -40,6 +40,21 @@ done.
   a value for it** — the schema is authoritative, not the state. A name the
   schema declares but the state has no entry for resolves to the declared
   default. Both the evaluator and the applier go through this one method.
+- **A `float` variable accepts an `int`; an `int` variable never accepts a
+  `float`.** The asymmetry is deliberate and is forced by JSON:
+  `json_encode(1.0)` emits `1` and `json_decode("1")` returns an `int`, so an
+  integral float in a schema default, in a `set` / `add` / `sub` value, in a
+  comparison literal or in a stored variable comes back from the snapshot or
+  the session column as an `int`. Widening is lossless, so it is allowed and
+  the value is **canonicalised** back to a real `float`
+  (`VariableType::canonicalise()`, reached through
+  `VariableSchema::canonicalise()` and `VariableSchema::resolve()`). Narrowing
+  is not lossless, so a `float` literal under an `int` declaration is still
+  `TypeMismatchException`. The practical guarantee: an `eq` that is true
+  before a save is true after the reload. Note that `GameState` itself holds
+  no schema and so stores whatever it was handed — the widening happens on
+  every schema-aware read and write, which is every read and write the Engine
+  performs.
 - **The Engine trusts its inputs.** All of the above is format validation
   against trusted, already-compiled content — it is not a security boundary.
   External input is validated in `src/Api` before it ever reaches the Engine.
@@ -62,8 +77,11 @@ is a shape the parser and tests actually accept.
   scalar). No optional keys.
 - Evaluation: `$schema->assertAccepts($var, $value)` first — comparing a
   variable declared `int` against the literal `1.0` is `TypeMismatchException`,
-  not a silent `false`. Then the variable is resolved (schema default if
-  absent from state) and compared with `===` (`eq`) or `!==` (`neq`).
+  not a silent `false`. The reverse is allowed: a variable declared `float`
+  accepts the literal `1`, which is widened to `1.0` (see *Conventions*). Then
+  the variable is resolved (schema default if absent from state, canonicalised
+  the same way) and compared with `===` (`eq`) or `!==` (`neq`). Both sides are
+  canonicalised, never just one.
 - **Float equality is exact.** `eq` on a `float` variable compares with
   `===`; no epsilon is applied. `0.1 + 0.2` does **not** equal `0.3` under
   `eq`, but it *does* equal the literal `0.1 + 0.2` evaluates to in PHP. An
@@ -422,6 +440,12 @@ only in a thrown exception.
 type does not accept throws `TypeMismatchException` when the
 `VariableDefinition` is constructed. A duplicate variable name across two
 definitions throws `MalformedNodeException::duplicateKey()`.
+
+A `float` variable declared with an integral default serializes as
+`{"type": "float", "default": 1}` — JSON has no way to say `1.0` — and is read
+back as a `float`, because the default is canonicalised when the
+`VariableDefinition` is constructed. See the acceptance rule under
+*Conventions*.
 
 ## `StateDiff` — the `EffectsApplied` payload
 

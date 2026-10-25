@@ -75,13 +75,19 @@ final readonly class ConditionEvaluator
 
         $current = $this->schema->resolve($name, $state);
 
+        // Both sides are canonicalised, never just one: `resolve()` widens the
+        // state's value and this widens the authored literal, so an integral
+        // float that came back from JSON as an int is still `===` the literal
+        // it was authored against.
+        $value = $this->schema->canonicalise($name, $comparison->value);
+
         return match ($op) {
-            ConditionOp::Eq => $current === $comparison->value,
-            ConditionOp::Neq => $current !== $comparison->value,
-            ConditionOp::Lt => $current < $comparison->value,
-            ConditionOp::Lte => $current <= $comparison->value,
-            ConditionOp::Gt => $current > $comparison->value,
-            ConditionOp::Gte => $current >= $comparison->value,
+            ConditionOp::Eq => $current === $value,
+            ConditionOp::Neq => $current !== $value,
+            ConditionOp::Lt => $current < $value,
+            ConditionOp::Lte => $current <= $value,
+            ConditionOp::Gt => $current > $value,
+            ConditionOp::Gte => $current >= $value,
             default => throw UnknownOperatorException::condition($op->value),
         };
     }
