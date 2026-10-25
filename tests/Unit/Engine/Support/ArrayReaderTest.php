@@ -255,6 +255,21 @@ final class ArrayReaderTest extends TestCase
         self::assertFalse($reader->has('c'));
     }
 
+    /**
+     * The one authored key with a union shape is a scene's `next`, which is
+     * either a scene name or a rule list. Asking first keeps that branch here
+     * rather than making the caller touch the raw array.
+     */
+    public function testIsStringDistinguishesAStringValueFromEveryOtherShape(): void
+    {
+        $reader = self::reader(['scene' => 'cave', 'rules' => [['scene' => 'cave']], 'nothing' => null]);
+
+        self::assertTrue($reader->isString('scene'));
+        self::assertFalse($reader->isString('rules'));
+        self::assertFalse($reader->isString('nothing'));
+        self::assertFalse($reader->isString('absent'));
+    }
+
     public function testRejectUnknownKeysAcceptsTheAllowedSet(): void
     {
         $reader = self::reader(['op' => 'has_item', 'item' => 'rope', 'qty' => 2]);

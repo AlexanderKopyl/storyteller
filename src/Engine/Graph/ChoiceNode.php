@@ -1,0 +1,73 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Storyteller\Engine\Graph;
+
+use Storyteller\Engine\Ast\Condition;
+use Storyteller\Engine\Ast\Effect;
+use Storyteller\Engine\Support\ArrayReader;
+
+/**
+ * An authored choice: what the player may pick, when they may pick it, and
+ * what happens when they do.
+ *
+ * A choice with no condition is always available; a condition that evaluates
+ * false makes picking it an error rather than a no-op, because the player was
+ * never offered it.
+ */
+final readonly class ChoiceNode
+{
+    /**
+     * @param list<Effect> $effects
+     */
+    public function __construct(
+        public string $key,
+        public ?Condition $condition = null,
+        public array $effects = [],
+    ) {
+    }
+
+    public function isAlwaysAvailable(): bool
+    {
+        return $this->condition === null;
+    }
+
+    /**
+     * @param array<array-key, mixed> $node
+     * @param string                  $path breadcrumb used in error messages
+     */
+    public static function fromArray(array $node, string $path = 'choice'): self
+    {
+        $reader = new ArrayReader($node, $path);
+
+        $reader->rejectUnknownKeys('key', 'condition', 'effects');
+
+        return new self(
+            $reader->requireString('key'),
+            $reader->has('condition')
+                ? Condition::fromArray($reader->requireArray('condition'), $path . '.condition')
+                : null,
+            Effect::listFromArray($reader->optionalArrayList('effects'), $path . '.effects'),
+        );
+    }
+
+    /**
+     * @return array{key: string, condition?: array<string, mixed>, effects: list<array<string, mixed>>}
+     */
+    public function toArray(): array
+    {
+        $out = ['key' => $this->key];
+
+        if ($this->condition !== null) {
+            $out['condition'] = $this->condition->toArray();
+        }
+
+        $out['effects'] = array_map(
+            static fn (Effect $effect): array => $effect->toArray(),
+            $this->effects,
+        );
+
+        return $out;
+    }
+}

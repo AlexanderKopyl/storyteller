@@ -251,6 +251,19 @@ final readonly class ArrayReader
     }
 
     /**
+     * Whether the key holds a string.
+     *
+     * The format has exactly one authored union — a scene's `next`, which is
+     * either a scene name or a rule list — and this is what lets its reader
+     * pick a branch without touching the raw array itself. Narrowing stays in
+     * this one class.
+     */
+    public function isString(string $key): bool
+    {
+        return is_string($this->data[$key] ?? null);
+    }
+
+    /**
      * Rejects any key outside the allowed set, so a typo in authored content
      * fails when the story is compiled instead of silently doing nothing when
      * it is played.
