@@ -1135,3 +1135,42 @@ red message recorded for each, `cs-fix` + `phpstan` after each.
 - **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
   test `OK (563 tests, 8015 assertions)`.
 - **Commit:** `docs(engine): describe the visit rule where it is observable`
+
+### F6 — the nine public methods with no production call site (m2, minor)
+
+One used, one removed, seven justified in a line each at their declaration.
+
+| Method | Disposition |
+|---|---|
+| `EffectResult::isRedirect()` | **Used.** `Transition` now branches on it at both redirect sites, as the plan's step 7 specified. |
+| `ArrayReader::child()` | **Removed.** Orphaned when `parse()` started taking its path explicitly (deviation 5); `new ArrayReader($reader->requireArray($k), "$path.$k")` is the same two lines where it is wanted, and no parser wanted it. |
+| `ConditionOp::isComparison()` | Kept — `src/Content`: a compiler holds an `op` string before any node exists and decides from it whether `var`/`value` are required. Its sibling `isOrdering()` *is* used by the evaluator. |
+| `EffectOp::isArithmetic()` | Kept — same reason: whether the named variable must be numeric, asked of an `op` string. |
+| `NextRule::isFallback()` | Kept — `src/Content` lints what the Engine deliberately refuses to diagnose: a fallback written first makes later rules unreachable, and a list without one can dead-end at play time. |
+| `ChoiceNode::isAlwaysAvailable()` | Kept — `src/Api` lists a scene's choices; this is the one question that needs no state, so only the guarded ones have to be evaluated. |
+| `SceneNode::hasChoice()` | Kept — `src/Api` tells a 404 from a 409 *before* attempting a turn. `Transition` uses `choice()`, which throws, because for a turn a missing choice is an error; asking by exception is not validation. |
+| `VariableSchema::names()` | Kept — `src/Content` diffs a schema against its predecessor; `toArray()` returns the whole declaration when only names were wanted. |
+| `VariableSchema::defaultOf()` | Kept — `src/Content` / `src/Api` show declared defaults; reaching that through `resolve()` against a fabricated empty state would be worse. |
+
+- **A finding of my own, while using `isRedirect()`.** It needs
+  `@phpstan-assert-if-true !null $this->redirectTo` for the call sites to narrow. I wrote in
+  the docblock that PHPStan verifies the assertion against the body, then checked: replacing
+  the body with `return true` still gives `[OK] No errors`. The annotation is taken on
+  **trust**. The docblock now says so and names
+  `EffectResultTest::testIsRedirectReflectsRedirectTo` as its guard — that test asserts both
+  directions at runtime and is what keeps the narrowing honest. An annotation nothing checks,
+  described as checked, is the same defect r2 was about.
+- **Files:** `src/Engine/EffectResult.php`, `src/Engine/Transition.php`,
+  `src/Engine/Ast/ConditionOp.php`, `src/Engine/Ast/EffectOp.php`,
+  `src/Engine/Graph/NextRule.php`, `src/Engine/Graph/ChoiceNode.php`,
+  `src/Engine/Graph/SceneNode.php`, `src/Engine/State/VariableSchema.php`,
+  `src/Engine/Support/ArrayReader.php`; tests in `tests/Unit/Engine/EffectResultTest.php`,
+  `tests/Unit/Engine/Support/ArrayReaderTest.php`.
+- **Tests:** `ArrayReaderTest::testChildExtendsThePathInErrorMessages` replaced by
+  `testANestedReaderNamesTheExtendedPathInErrorMessages`, which pins the property `child()`
+  existed for — a nested error names the path that reaches it — on the readers the AST
+  actually builds. `EffectResultTest`'s case gains the docblock explaining what it now
+  guards.
+- **Checks:** cs-check 0 of 87 · phpstan `[OK] No errors` · deptrac `Violations 0` · test
+  `OK (563 tests, 8014 assertions)` (one assertion fewer: the removed `child()` case).
+- **Commit:** `refactor(engine): use isRedirect and justify the unused public surface`

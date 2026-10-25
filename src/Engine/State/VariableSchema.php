@@ -93,6 +93,13 @@ final readonly class VariableSchema
         return $this->definition($name)->type;
     }
 
+    /**
+     * m2: {@see self::resolve()} reads the definition's default directly, so
+     * nothing in the Engine calls this. Kept for `src/Content` and `src/Api`:
+     * a schema is content in its own right — an authoring UI shows declared
+     * defaults, and a version diff compares them — and reaching that through
+     * `resolve()` against a fabricated empty state would be a worse way to ask.
+     */
     public function defaultOf(string $name): int|float|string|bool
     {
         return $this->definition($name)->default;
@@ -190,6 +197,13 @@ final readonly class VariableSchema
     }
 
     /**
+     * m2: no production call site in the Engine, which only ever resolves
+     * names an AST node gave it. Kept for `src/Content`: enumerating a
+     * version's declared variables is how a schema is diffed against its
+     * predecessor and how an authoring UI lists what a story has — and
+     * `toArray()`, the alternative, hands back the whole declaration when only
+     * the names were wanted.
+     *
      * @return list<string> sorted
      */
     public function names(): array

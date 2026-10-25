@@ -24,6 +24,21 @@ final readonly class EffectResult
     ) {
     }
 
+    /**
+     * Used by `Transition` at both of its redirect sites.
+     *
+     * The annotation is what lets it be used there: without it, static
+     * analysis cannot see that a true answer means `redirectTo` is a string,
+     * and the call site would need a second `!== null` check that says nothing
+     * a reader did not already know. PHPStan takes the annotation on trust
+     * rather than proving it against this body — it reported nothing when the
+     * body was temporarily replaced by `return true` — so
+     * `EffectResultTest::testIsRedirectReflectsRedirectTo` asserts both
+     * directions at runtime. That test is the annotation's guard, not a
+     * formality.
+     *
+     * @phpstan-assert-if-true !null $this->redirectTo
+     */
     public function isRedirect(): bool
     {
         return $this->redirectTo !== null;

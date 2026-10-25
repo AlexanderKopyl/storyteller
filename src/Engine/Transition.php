@@ -97,7 +97,7 @@ final readonly class Transition
             $events[] = new EffectsApplied($currentScene, EffectPhase::Choice, $chosen->diff, $turn);
         }
 
-        if ($chosen->redirectTo !== null) {
+        if ($chosen->isRedirect()) {
             // A `goto` in the choice's effects replaces the declared `next`
             // entirely, and spends the first redirect of the turn.
             $target = $chosen->redirectTo;
@@ -188,7 +188,7 @@ final readonly class Transition
                 $events[] = new EffectsApplied($target, EffectPhase::OnEnter, $entered->diff, $turn);
             }
 
-            if ($entered->redirectTo === null) {
+            if (!$entered->isRedirect()) {
                 break;
             }
 

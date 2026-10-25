@@ -29,6 +29,12 @@ enum ConditionOp: string
 
     /**
      * Compares a variable against a literal.
+     *
+     * m2: no production call site inside the Engine, which dispatches on node
+     * class rather than on `op`. Kept for `src/Content`: a compiler reading
+     * authored YAML has an `op` string and no node yet, and this is how it
+     * decides whether a `var`/`value` pair is required before it builds one.
+     * {@see self::isOrdering()}, its sibling, *is* used by the evaluator.
      */
     public function isComparison(): bool
     {

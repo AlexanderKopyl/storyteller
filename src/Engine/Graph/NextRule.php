@@ -26,6 +26,16 @@ final readonly class NextRule
     {
     }
 
+    /**
+     * m2: the resolver evaluates `if` directly and never asks. Kept for
+     * `src/Content`, which needs exactly this to lint what the Engine
+     * deliberately refuses to diagnose: a fallback written before another rule
+     * makes every rule after it unreachable, and a scene with no fallback at
+     * all can dead-end into `NoNextSceneException` at play time. Both are
+     * compile-time questions about a rule list, and this is the predicate they
+     * are asked with. See
+     * `NextSceneResolverTest::testAFallbackPlacedFirstMakesEveryLaterRuleUnreachable`.
+     */
     public function isFallback(): bool
     {
         return $this->if === null;

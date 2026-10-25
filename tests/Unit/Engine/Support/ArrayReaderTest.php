@@ -313,19 +313,27 @@ final class ArrayReaderTest extends TestCase
         );
     }
 
-    public function testChildExtendsThePathInErrorMessages(): void
+    /**
+     * m2: `child()` was orphaned when `parse()` started taking its path
+     * explicitly (deviation 5) and has been removed. The property it existed
+     * for — a nested error names the path that reaches it — is a property of
+     * the readers the AST actually builds, so it is pinned here on those
+     * instead of on a helper nothing calls.
+     */
+    public function testANestedReaderNamesTheExtendedPathInErrorMessages(): void
     {
-        $reader = self::reader(['b' => ['c' => 7]], 'a');
+        $outer = self::reader(['b' => ['c' => 7]], 'a');
+        $inner = new ArrayReader($outer->requireArray('b'), 'a.b');
 
-        self::assertSame(7, $reader->child('b')->requireInt('c'));
+        self::assertSame(7, $inner->requireInt('c'));
 
         self::assertMalformed(
-            static fn (): string => self::reader(['b' => ['c' => 7]], 'a')->child('b')->requireString('c'),
+            static fn (): string => $inner->requireString('c'),
             'a.b',
             'c',
         );
         self::assertMalformed(
-            static fn (): ArrayReader => self::reader(['b' => 'nope'], 'a')->child('b'),
+            static fn (): array => self::reader(['b' => 'nope'], 'a')->requireArray('b'),
             'a',
             'b',
             'array',

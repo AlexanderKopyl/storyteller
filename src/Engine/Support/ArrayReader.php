@@ -16,8 +16,8 @@ use Storyteller\Engine\Exception\MalformedNodeException;
  * throws {@see MalformedNodeException} naming the path and the key.
  *
  * `$path` is a human-readable breadcrumb such as `condition.of[1]`, extended
- * by {@see self::child()} and by the AST dispatchers, so an error points at a
- * position in the authored document rather than at a PHP type.
+ * by the AST dispatchers as they descend, so an error points at a position in
+ * the authored document rather than at a PHP type.
  *
  * Narrowing is done with `is_*()` and element-by-element copies into a fresh
  * array: PHP's own type juggling never leaks through — a numeric string is not
@@ -296,13 +296,5 @@ final readonly class ArrayReader
                 throw MalformedNodeException::unknownKey($this->path, (string) $key);
             }
         }
-    }
-
-    /**
-     * A reader over a child object, with the path extended for error messages.
-     */
-    public function child(string $key): self
-    {
-        return new self($this->requireArray($key), $this->path . '.' . $key);
     }
 }

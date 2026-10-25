@@ -33,6 +33,13 @@ final readonly class ChoiceNode
     ) {
     }
 
+    /**
+     * m2: `Transition` reads `condition` directly, because it has to evaluate
+     * it. Kept for `src/Api`, which has the opposite job — listing a scene's
+     * choices for a client — and for which this is the one question that needs
+     * no state at all: an unguarded choice is available to everyone, and only
+     * the rest have to be evaluated against the session.
+     */
     public function isAlwaysAvailable(): bool
     {
         return $this->condition === null;

@@ -37,6 +37,13 @@ final readonly class SceneNode
     ) {
     }
 
+    /**
+     * m2: `Transition` calls {@see self::choice()}, which throws, because a
+     * turn that names a missing choice *is* an error. Kept for `src/Api`,
+     * which must answer the same question without one: validating a submitted
+     * choice key against the scene is how a 404 is told from a 409 before any
+     * turn is attempted, and asking by exception is not validation.
+     */
     public function hasChoice(string $choiceKey): bool
     {
         foreach ($this->choices as $choice) {
