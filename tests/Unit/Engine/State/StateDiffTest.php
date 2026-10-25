@@ -151,6 +151,34 @@ final class StateDiffTest extends TestCase
         );
     }
 
+    /**
+     * M2: a diff is a read-only observation, so a name the schema does not
+     * declare is skipped rather than made to abort the turn that happened to
+     * run over it. The strict rule still applies where it belongs — an AST
+     * node that *names* an undeclared variable is still
+     * `UnknownVariableException` — but a passive enumeration of whatever the
+     * state carries is not the place to enforce it.
+     */
+    public function testAVariableTheSchemaDoesNotDeclareIsSkippedRatherThanAborting(): void
+    {
+        $before = GameState::create(['hp' => 95, 'legacy_mana' => 3], [], [], [], []);
+        $after = $before->withVar('hp', 90)->withVar('legacy_mana', 4);
+
+        $diff = StateDiff::between($before, $after, $this->schema());
+
+        self::assertSame(['vars' => ['hp' => ['from' => 95, 'to' => 90]]], $diff->toArray());
+    }
+
+    public function testAnUndeclaredVariableAloneLeavesTheDiffEmpty(): void
+    {
+        $before = GameState::create(['legacy_mana' => 3], [], [], [], []);
+
+        $diff = StateDiff::between($before, $before->withVar('legacy_mana', 4), $this->schema());
+
+        self::assertTrue($diff->isEmpty());
+        self::assertSame([], $diff->toArray());
+    }
+
     private function schema(): VariableSchema
     {
         return VariableSchema::of([

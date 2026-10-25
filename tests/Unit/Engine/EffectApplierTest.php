@@ -12,6 +12,7 @@ use Storyteller\Engine\Ast\EffectOp;
 use Storyteller\Engine\EffectApplier;
 use Storyteller\Engine\Exception\TypeMismatchException;
 use Storyteller\Engine\Exception\UnknownOperatorException;
+use Storyteller\Engine\Exception\UnknownVariableException;
 use Storyteller\Engine\State\GameState;
 use Storyteller\Engine\State\VariableDefinition;
 use Storyteller\Engine\State\VariableSchema;
@@ -292,6 +293,35 @@ final class EffectApplierTest extends TestCase
         $this->expectException(UnknownOperatorException::class);
 
         $this->applier()->apply([$unknown], $this->state());
+    }
+
+    /**
+     * M2: a saved session whose story version no longer declares one of the
+     * variables it carries must still be playable. Before the fix the diff —
+     * which runs on every phase of every turn — resolved every name in either
+     * state, so an undeclared one threw `UnknownVariableException` even for a
+     * turn with no effects at all, naming a variable the turn never mentioned.
+     */
+    public function testAStateCarryingAnUndeclaredVariableStillTakesAnEmptyTurn(): void
+    {
+        $state = GameState::create(['hp' => 10, 'legacy_mana' => 3], [], [], [], []);
+
+        $result = $this->applier()->apply([], $state);
+
+        self::assertSame($state, $result->state);
+        self::assertTrue($result->diff->isEmpty());
+        self::assertSame(3, $result->state->var('legacy_mana'));
+    }
+
+    public function testAnEffectThatNamesAnUndeclaredVariableStillThrows(): void
+    {
+        $this->expectException(UnknownVariableException::class);
+        $this->expectExceptionMessage('legacy_mana');
+
+        $this->applier()->apply(
+            $this->effects([['op' => 'set', 'var' => 'legacy_mana', 'value' => 4]]),
+            GameState::create(['legacy_mana' => 3], [], [], [], []),
+        );
     }
 
     /**

@@ -40,6 +40,9 @@ done.
   a value for it** — the schema is authoritative, not the state. A name the
   schema declares but the state has no entry for resolves to the declared
   default. Both the evaluator and the applier go through this one method.
+  The one exception is `StateDiff`, which *observes* state rather than
+  resolving a name an author wrote and therefore skips undeclared names — see
+  the `StateDiff` section.
 - **A `float` variable accepts an `int`; an `int` variable never accepts a
   `float`.** The asymmetry is deliberate and is forced by JSON:
   `json_encode(1.0)` emits `1` and `json_decode("1")` returns an `int`, so an
@@ -471,6 +474,13 @@ is a **structural, post-hoc comparison** of two states — it records
   (not `null`), because the diff is a view over variable state and must obey
   the same missing-variable rule as everything else — `StateDiff::between()`
   takes the `VariableSchema` for exactly this reason.
+- A variable the schema does **not** declare is **skipped**, not reported and
+  not an error. The diff runs on every effect phase of every turn, including a
+  phase with no effects, so a state carrying a name a newer story version has
+  dropped stays playable. This is the one place the "an undeclared name is an
+  error even when the state carries a value" rule does not apply: the diff
+  observes state, it does not resolve a name an author wrote. An AST node that
+  names an undeclared variable still raises `UnknownVariableException`.
 - `inventory` and `visited` diff against `itemQty()` / `visitCount()`, whose
   natural absent-value is `0`; a removed inventory key is therefore reported
   as `{"from": <n>, "to": 0}`, not omitted.

@@ -20,6 +20,13 @@ namespace Storyteller\Engine\State;
  * variable is the same here as it is in the evaluator — the declared default,
  * never null. That keeps `from` a scalar and keeps the first write of every
  * variable visible in the event log.
+ *
+ * A variable the schema does not declare at all is **skipped**. The diff runs
+ * on every effect phase of every turn, including an empty one, so making it
+ * throw would brick a saved session whose story version has since dropped a
+ * variable — over a name the turn never mentioned. Observing is not
+ * validating; an AST node that names an undeclared variable still raises
+ * {@see \Storyteller\Engine\Exception\UnknownVariableException}.
  */
 final readonly class StateDiff
 {
@@ -42,6 +49,18 @@ final readonly class StateDiff
         $vars = [];
 
         foreach (self::unionOfKeys($before->vars, $after->vars) as $name) {
+            // A name the schema does not declare is skipped, not fatal. The
+            // strict rule — "an undeclared name is an error even when the
+            // state carries a value" — is about an AST node that *names* a
+            // variable; applying it to this passive enumeration would turn
+            // "the author asked about an unknown variable" into "this session
+            // can never take another turn", and would do it on a turn with no
+            // effects at all. A diff is a read-only observation, and an
+            // undeclared name has no declared default to diff against anyway.
+            if (!$schema->has($name)) {
+                continue;
+            }
+
             $from = $schema->resolve($name, $before);
             $to = $schema->resolve($name, $after);
 
