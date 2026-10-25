@@ -23,7 +23,7 @@
 | 13. `Transition` + `TransitionResult` | done | `feat(engine): add Transition with redirect-budget and visit semantics` (8333176) |
 | 14. Determinism and purity guards | done | `test(engine): pin determinism and the purity invariants` (8f1a8db) |
 | 15. `Rng` + `SeededRng` | done | `feat(engine): add the seeded RNG forward contract (unused by design)` (6eb4724) · `Engine: drop the literal Secure engine name from the RNG docblock` (fb22e74) |
-| 16. `docs/engine/ast.md` | done | `docs(engine): add the AST specification` (pending) |
+| 16. `docs/engine/ast.md` | done | `docs(engine): add the AST specification` (5cfa5ca) |
 
 ## Step log
 
