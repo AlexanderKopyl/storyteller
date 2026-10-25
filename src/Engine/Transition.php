@@ -40,9 +40,12 @@ use Storyteller\Engine\State\VariableSchema;
  * came to rest on.** A scene that redirects out of its own `on_enter` was
  * transited, not entered: its effects really happened and are logged, but it
  * appears in neither `visited` nor `history` and gets no `SceneEntered`. The
- * consequence for an author is deliberate — during a scene's own `on_enter`
- * that scene has not been visited yet, so a "first time here" test written
- * there reads as not-yet-visited on the first entry and visited afterwards.
+ * consequence for an author is deliberate — a scene's own `on_enter` runs
+ * before its visit is counted — but it is only observable on the **next**
+ * turn, from a choice condition or a `next` guard: effects carry no
+ * conditions, so nothing inside an `on_enter` can read `visited` at all.
+ * "First time here" is a `not visited` guard on a choice, never a test inside
+ * `on_enter`.
  */
 final readonly class Transition
 {

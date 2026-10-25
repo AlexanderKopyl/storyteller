@@ -1115,3 +1115,23 @@ red message recorded for each, `cs-fix` + `phpstan` after each.
   test `OK (562 tests, 8012 assertions)` (unchanged — a comment).
 - **Commit:** `docs(engine): state the real limit of the int-to-float widening`
 - **Deviations:** none.
+
+### F5 — the `visited` docblocks described something the AST cannot express (m1, minor)
+
+- **Changed.** `src/Engine/Ast/Visited.php` and `Transition`'s class docblock both claimed a
+  "first time here" test "written inside `on_enter`". Effects carry no conditions, so nothing
+  there can read `visited` at all — the implementer established this during the build
+  (deviation 10) and the planned test case was dropped for it. Both now state the rule in
+  terms of **choice conditions and `next` guards on the following turn**, and point at
+  `docs/engine/ast.md` and the test that pins it. `docs/engine/ast.md` was already correct
+  (step 16) and is unchanged.
+- **Tests added:** one, `EffectTest::testNoEffectOperatorTakesACondition` — the structural
+  fact underneath the reworded wording: the eight effect operators are pinned as a literal
+  list (a conditional one would make the rejected illustration expressible) and an effect
+  node carrying a `condition` key is rejected at parse time.
+- **Falsified.** Removing `rejectUnknownKeys()` from `FlagEffect::parse()` → the new case
+  fails (alongside the pre-existing unknown-key case), so it is not a tautology over a shape
+  nobody enforces.
+- **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
+  test `OK (563 tests, 8015 assertions)`.
+- **Commit:** `docs(engine): describe the visit rule where it is observable`

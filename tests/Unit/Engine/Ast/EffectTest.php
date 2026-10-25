@@ -31,6 +31,38 @@ use Storyteller\Engine\Support\ArrayReader;
 final class EffectTest extends TestCase
 {
     /**
+     * **m1: effects carry no conditions, and that is why "a `visited` test
+     * written inside `on_enter`" cannot exist.**
+     *
+     * Two docblocks used to illustrate the visit rule with exactly that, and
+     * the planned test case for it was dropped during implementation because
+     * it is not expressible. This is the structural fact underneath: there is
+     * no conditional effect operator, and an effect node that tries to carry a
+     * guard is rejected at parse time rather than silently applied. "First
+     * time here" is therefore a choice condition or a `next` guard, and
+     * nothing else.
+     */
+    public function testNoEffectOperatorTakesACondition(): void
+    {
+        $operators = array_map(static fn (EffectOp $op): string => $op->value, EffectOp::cases());
+
+        self::assertSame(
+            ['set', 'add', 'sub', 'set_flag', 'clear_flag', 'give_item', 'remove_item', 'goto'],
+            $operators,
+            'A conditional effect operator would make the rejected illustration expressible.',
+        );
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('condition');
+
+        Effect::fromArray([
+            'op' => 'set_flag',
+            'flag' => 'first_time',
+            'condition' => ['op' => 'not', 'of' => ['op' => 'visited', 'scene' => 'cave']],
+        ]);
+    }
+
+    /**
      * @param array<array-key, mixed> $node
      * @param class-string<Effect>    $expectedClass
      */

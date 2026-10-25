@@ -9,10 +9,17 @@ use Storyteller\Engine\Support\ArrayReader;
 /**
  * `visited`: true when the scene has been entered at least `times` times.
  *
- * A scene is marked visited *after* its own `on_enter` effects have run, so
- * `{"op":"visited","scene":"X","times":1}` evaluated inside scene X's own
- * `on_enter` is false on the first entry and true on every later one. That is
- * what makes "first time here" expressible as a `not` of this node.
+ * A scene is marked visited *after* its own `on_enter` effects have run, and
+ * the place that difference is observable is the **next** turn: a choice
+ * condition or a `next` guard on scene X, evaluated while the player is
+ * standing in X, sees the entry that brought them there already counted. It
+ * is **not** observable from inside `on_enter` — effects carry no conditions,
+ * so nothing there can read this node at all. "First time here" is therefore
+ * a `not` of this node written as a choice condition or a `next` guard, never
+ * as something inside an `on_enter`.
+ *
+ * See `docs/engine/ast.md` → *The `visited` operator, precisely*, and
+ * `TransitionTest::testASceneIsNotVisitedUntilAfterItsOwnOnEnter`.
  */
 final readonly class Visited extends Condition
 {
