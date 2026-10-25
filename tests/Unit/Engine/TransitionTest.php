@@ -319,6 +319,130 @@ final class TransitionTest extends TestCase
     }
 
     /**
+     * **A `goto` to the scene currently being entered is a cycle, and the
+     * Engine does not look for cycles — the budget is what ends it.**
+     *
+     * Both shapes below would run forever without the counter: a scene whose
+     * `on_enter` sends the player back to itself, and a two-scene ping-pong.
+     * Neither is diagnosed as a loop; each simply spends the five redirects
+     * and is refused on the sixth, with the same message a straight chain of
+     * six hops produces. That is D-REDIRECT working as designed, and it is
+     * worth pinning because "no cycle detection" is otherwise only a sentence
+     * in a docblock.
+     */
+    public function testAGotoBackIntoTheSceneBeingEnteredIsStoppedByTheBudgetNotByCycleDetection(): void
+    {
+        $selfLoop = $this->transition([
+            ['key' => 'a', 'choices' => [['key' => 'go']], 'next' => 'b'],
+            ['key' => 'b', 'on_enter' => [['op' => 'goto', 'scene' => 'b']]],
+        ]);
+
+        $pingPong = $this->transition([
+            ['key' => 'a', 'choices' => [['key' => 'go']], 'next' => 'b'],
+            ['key' => 'b', 'on_enter' => [['op' => 'goto', 'scene' => 'c']]],
+            ['key' => 'c', 'on_enter' => [['op' => 'goto', 'scene' => 'b']]],
+        ]);
+
+        $messages = [];
+
+        foreach (['self' => $selfLoop, 'ping-pong' => $pingPong] as $label => $transition) {
+            try {
+                $transition->run($this->state(), 'a', 'go', 1);
+                self::fail(sprintf('The %s cycle did not terminate.', $label));
+            } catch (RedirectLoopException $exception) {
+                $messages[$label] = $exception->getMessage();
+            }
+        }
+
+        self::assertSame(
+            'Redirect budget of 5 exceeded; the last scene reached was "b".',
+            $messages['self'],
+        );
+        // The sixth hop of b -> c -> b -> c -> b -> c is back to `b`, and `b`
+        // is what the message names — the scene the turn was *about to* enter
+        // when it was refused, which for this cycle happens to also be a scene
+        // it did enter. The acyclic case below shows the difference: `h6` was
+        // never reached at all (review m3).
+        self::assertSame(
+            'Redirect budget of 5 exceeded; the last scene reached was "b".',
+            $messages['ping-pong'],
+        );
+
+        // The same message a six-hop acyclic chain produces: the counter, not
+        // the repetition, is what refused the turn.
+        try {
+            $this->transition(self::redirectChain(6))->run($this->state(), 'a', 'go', 1);
+            self::fail('A six-hop chain did not throw.');
+        } catch (RedirectLoopException $exception) {
+            self::assertSame(
+                'Redirect budget of 5 exceeded; the last scene reached was "h6".',
+                $exception->getMessage(),
+            );
+        }
+    }
+
+    /**
+     * `visited` across four turns, with a scene that is redirected *through*
+     * every single time.
+     *
+     * One turn already pins that a transited scene is not entered; the point
+     * here is that the rule does not drift with repetition — `hall` is still
+     * at zero after being passed through four times, while `cave` counts every
+     * rest, `history` grows by exactly one entry per turn, and the `visited`
+     * operator answers from the same numbers on the way past.
+     */
+    public function testVisitedCountsAcrossSeveralTurnsAndNeverCountsASceneRedirectedThrough(): void
+    {
+        $story = [
+            ['key' => 'start', 'choices' => [['key' => 'go']], 'next' => 'hall'],
+            [
+                'key' => 'hall',
+                'on_enter' => [['op' => 'goto', 'scene' => 'cave']],
+            ],
+            [
+                'key' => 'cave',
+                'choices' => [
+                    ['key' => 'again'],
+                    ['key' => 'deeper', 'condition' => ['op' => 'visited', 'scene' => 'cave', 'times' => 3]],
+                    ['key' => 'through_hall', 'condition' => ['op' => 'visited', 'scene' => 'hall']],
+                ],
+                'next' => 'hall',
+            ],
+        ];
+
+        $transition = $this->transition($story);
+        $result = $transition->run($this->state(), 'start', 'go', 1);
+
+        self::assertSame('cave', $result->sceneKey);
+        self::assertSame(1, $result->state->visitCount('cave'));
+
+        for ($turn = 2; $turn <= 4; ++$turn) {
+            $result = $transition->run($result->state, 'cave', 'again', $turn);
+
+            self::assertSame('cave', $result->sceneKey);
+            self::assertSame($turn, $result->state->visitCount('cave'));
+            self::assertSame(0, $result->state->visitCount('hall'));
+            self::assertSame(1, self::sceneEntered($result)['redirects']);
+        }
+
+        self::assertSame(['cave', 'cave', 'cave', 'cave'], $result->state->toArray()['history']);
+        self::assertSame(['cave' => 4], $result->state->toArray()['visited']);
+
+        // The counts the operator reads are the same ones: a choice gated on
+        // three visits to `cave` is now open ...
+        $deeper = $transition->run($result->state, 'cave', 'deeper', 5);
+
+        self::assertSame('cave', $deeper->sceneKey);
+
+        // ... and one gated on a single visit to `hall` is still shut, after
+        // four passes through it.
+        $this->expectException(ChoiceUnavailableException::class);
+        $this->expectExceptionMessage('through_hall');
+
+        $transition->run($result->state, 'cave', 'through_hall', 6);
+    }
+
+    /**
      * A scene the turn only passed through was transited, not entered: its
      * `on_enter` effects really happened and are logged, but it is absent from
      * both `visited` and `history`, and it gets no `SceneEntered`.

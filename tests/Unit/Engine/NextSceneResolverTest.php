@@ -79,6 +79,50 @@ final class NextSceneResolverTest extends TestCase
         $this->resolver()->resolve([], $this->state(), 'the_end');
     }
 
+    /**
+     * A fallback is a rule that matches unconditionally **at its position**,
+     * so one written first shadows every rule after it. The resolver does not
+     * warn, because it cannot tell an unreachable rule from a deliberately
+     * ordered list — that is a lint for the Content compiler, and this test is
+     * what says the Engine deliberately leaves it there.
+     */
+    public function testAFallbackPlacedFirstMakesEveryLaterRuleUnreachable(): void
+    {
+        $rules = NextRule::listFromArray([
+            ['scene' => 'home'],
+            ['scene' => 'cave', 'if' => ['op' => 'flag', 'flag' => 'brave']],
+            ['scene' => 'tower'],
+        ]);
+
+        // `brave` is set, so rule 2 would match if it were ever reached.
+        self::assertSame('home', $this->resolver()->resolve($rules, $this->state(), 'crossroads'));
+        self::assertTrue($rules[0]->isFallback());
+        self::assertFalse($rules[1]->isFallback());
+    }
+
+    /**
+     * Resolution is a pure function of the rule list and the state: the same
+     * resolver asked twice, and two independently built resolvers, answer the
+     * same way, and the state is unchanged by having been read.
+     */
+    public function testResolutionIsRepeatableAndLeavesTheStateUntouched(): void
+    {
+        $rules = NextRule::listFromArray([
+            ['scene' => 'cave', 'if' => ['op' => 'has_item', 'item' => 'rope', 'qty' => 2]],
+            ['scene' => 'ridge', 'if' => ['op' => 'flag', 'flag' => 'brave']],
+            ['scene' => 'home'],
+        ]);
+
+        $state = $this->state();
+        $before = $state->toArray();
+        $resolver = $this->resolver();
+
+        self::assertSame('ridge', $resolver->resolve($rules, $state, 'crossroads'));
+        self::assertSame('ridge', $resolver->resolve($rules, $state, 'crossroads'));
+        self::assertSame('ridge', $this->resolver()->resolve($rules, $state, 'crossroads'));
+        self::assertSame($before, $state->toArray());
+    }
+
     private function resolver(): NextSceneResolver
     {
         return new NextSceneResolver(new ConditionEvaluator(VariableSchema::empty()));
