@@ -104,6 +104,7 @@ final class EnginePurityTest extends TestCase
         'Exception/UnknownSceneException.php' => 'Exception/EngineExceptionTest.php',
         'Exception/UnknownVariableException.php' => 'Exception/EngineExceptionTest.php',
         'Graph/StoryGraph.php' => 'Graph/SceneNodeTest.php',
+        'Random/Rng.php' => 'Random/SeededRngTest.php',
     ];
 
     public function testNoEngineSourceUsesANonDeterministicFunction(): void
