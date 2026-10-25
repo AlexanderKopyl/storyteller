@@ -35,6 +35,25 @@ final class ChoiceNodeTest extends TestCase
         self::assertSame([], $open->effects);
     }
 
+    /**
+     * M3: the two cases must not be confused. An **omitted** `condition` key
+     * means "no guard, always available"; an **explicit null** is malformed
+     * content — a YAML `condition:` line with nothing after it, or a compiler
+     * emitting `"condition": null` — and silently reading it as "no guard"
+     * would delete an authored gate rather than report an authoring error.
+     */
+    public function testAnOmittedConditionIsAlwaysAvailableButAnExplicitNullIsRejected(): void
+    {
+        $omitted = ChoiceNode::fromArray(['key' => 'south']);
+
+        self::assertTrue($omitted->isAlwaysAvailable());
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('choice: key "condition" must be of type object, got null.');
+
+        ChoiceNode::fromArray(['key' => 'south', 'condition' => null]);
+    }
+
     public function testRoundTrips(): void
     {
         $node = [

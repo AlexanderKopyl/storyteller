@@ -15,6 +15,10 @@ use Storyteller\Engine\Support\ArrayReader;
  * position**, so a fallback written first makes everything after it
  * unreachable. That is an authoring mistake, not an engine one, and the
  * resolver does not second-guess it.
+ *
+ * "No `if`" means the key is **absent**. An explicit `"if": null` is rejected
+ * at parse time, because reading it as a fallback would make every rule after
+ * this one unreachable without saying so.
  */
 final readonly class NextRule
 {
@@ -36,6 +40,11 @@ final readonly class NextRule
         $reader = new ArrayReader($node, $path);
 
         $reader->rejectUnknownKeys('scene', 'if');
+
+        // An omitted `if` makes this rule a fallback. An explicit null is
+        // malformed: read as a fallback, it would silently make every rule
+        // after this one unreachable.
+        $reader->rejectNull('if', 'object');
 
         $scene = $reader->requireString('scene');
         $guard = $reader->has('if')

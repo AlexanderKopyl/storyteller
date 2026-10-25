@@ -32,6 +32,21 @@ final class NextRuleTest extends TestCase
         self::assertSame('home', $fallback->scene);
     }
 
+    /**
+     * M3, the `next` half: an omitted `if` is a fallback, an explicit null is
+     * malformed. Read as a fallback, `"if": null` would silently make every
+     * rule after it unreachable.
+     */
+    public function testAnOmittedIfIsAFallbackButAnExplicitNullIsRejected(): void
+    {
+        self::assertTrue(NextRule::fromArray(['scene' => 'home'])->isFallback());
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('next[0]: key "if" must be of type object, got null.');
+
+        NextRule::listFromArray([['scene' => 'home', 'if' => null]]);
+    }
+
     public function testRoundTripsWithAndWithoutACondition(): void
     {
         $guarded = NextRule::fromArray(['scene' => 'cave', 'if' => ['op' => 'flag', 'flag' => 'brave']]);

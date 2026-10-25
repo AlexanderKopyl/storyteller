@@ -26,6 +26,14 @@ done.
   authored content (e.g. `"flagg"` instead of `"flag"`) throws
   `MalformedNodeException` at compile time rather than silently doing nothing
   at play time.
+- **An explicit `null` is not the same as an omitted key.** For a choice's
+  `condition` and a `next` rule's `if`, *omitting* the key means "no guard"
+  (an always-available choice, an unconditional fallback), while
+  `"condition": null` or `"if": null` is **rejected** with
+  `MalformedNodeException` — `key "condition" must be of type object, got
+  null`. In YAML a `condition:` line with nothing after it is exactly `null`,
+  and silently reading it as "no guard" would delete an authored gate rather
+  than report an authoring error. Use the absent key to mean absent.
 - **Structural validation happens at parse time; type validation happens at
   evaluation time.** `fromArray()` only checks shape: which keys are present,
   that `qty` / `times` is a positive int, that `value` is a scalar (or a JSON

@@ -256,6 +256,28 @@ final class ArrayReaderTest extends TestCase
     }
 
     /**
+     * `has()` deliberately conflates absent and null, which is right for a
+     * `??` narrowing and wrong for an optional key whose absence means
+     * something. `rejectNull()` is the other half: it lets a caller treat
+     * "omitted" and "explicitly null" as the two different things an author
+     * meant them to be.
+     */
+    public function testRejectNullFiresOnlyForAKeyThatIsPresentAndNull(): void
+    {
+        $reader = self::reader(['guard' => null, 'other' => ['op' => 'flag']]);
+
+        // Neither of these may throw: absent is not null, and a value is not
+        // null either.
+        $reader->rejectNull('absent', 'object');
+        $reader->rejectNull('other', 'object');
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('node: key "guard" must be of type object, got null.');
+
+        $reader->rejectNull('guard', 'object');
+    }
+
+    /**
      * The one authored key with a union shape is a scene's `next`, which is
      * either a scene name or a rule list. Asking first keeps that branch here
      * rather than making the caller touch the raw array.

@@ -251,6 +251,27 @@ final readonly class ArrayReader
     }
 
     /**
+     * Refuses a key that is present and explicitly `null`.
+     *
+     * {@see self::has()} cannot tell the two apart, and for an optional key
+     * whose absence carries meaning that difference is the whole story: an
+     * **omitted** `condition` means "no guard", while an **explicit null** —
+     * a YAML `condition:` line with nothing after it, or a compiler emitting
+     * `"condition": null` — is malformed content. Reading the second as the
+     * first would delete an authored gate instead of reporting an authoring
+     * error, which is the one kind of silent failure that changes who can
+     * reach what.
+     *
+     * @throws MalformedNodeException if the key is present with a null value
+     */
+    public function rejectNull(string $key, string $expected): void
+    {
+        if (array_key_exists($key, $this->data) && $this->data[$key] === null) {
+            throw MalformedNodeException::wrongType($this->path, $key, $expected, 'null');
+        }
+    }
+
+    /**
      * Whether the key holds a string.
      *
      * The format has exactly one authored union — a scene's `next`, which is

@@ -15,6 +15,11 @@ use Storyteller\Engine\Support\ArrayReader;
  * A choice with no condition is always available; a condition that evaluates
  * false makes picking it an error rather than a no-op, because the player was
  * never offered it.
+ *
+ * "No condition" means the `condition` key is **absent**. An explicit
+ * `"condition": null` is rejected at parse time: it is what a YAML
+ * `condition:` line with nothing after it compiles to, and treating it as "no
+ * guard" would silently turn an authored gate into an open door.
  */
 final readonly class ChoiceNode
 {
@@ -42,6 +47,11 @@ final readonly class ChoiceNode
         $reader = new ArrayReader($node, $path);
 
         $reader->rejectUnknownKeys('key', 'condition', 'effects');
+
+        // An omitted `condition` means "no guard". An explicit null does not:
+        // it is malformed content, and reading it as "no guard" would turn an
+        // authored gate into an always-available choice without a word.
+        $reader->rejectNull('condition', 'object');
 
         return new self(
             $reader->requireString('key'),
