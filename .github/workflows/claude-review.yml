@@ -1,0 +1,80 @@
+# Stage 5 - AI in the PR review loop.
+#
+# Every PR gets the same passes from REVIEW.md, ranked by severity, before a human reads
+# it. Humans then spend their attention on intent and risk rather than on the first pass.
+#
+# This workflow is a no-op until the ANTHROPIC_API_KEY secret is set on the repository, so
+# it is safe to merge before the key exists. Alternatively, drop this file and use the
+# Managed Code Review service, which needs no workflow at all.
+#
+# Claude never approves. Code-owner approval is still required to merge - enforce that with
+# branch protection.
+name: Claude review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    name: Review against REVIEW.md
+    runs-on: ubuntu-latest
+    # Two guards, both deliberate:
+    #  - PR events: same-repo branches only. A fork PR gets no secrets, so the job would
+    #    only fail noisily.
+    #  - Comment events: `issue_comment` and `pull_request_review_comment` run in the BASE
+    #    repo with access to secrets, whoever wrote the comment. So require an explicit
+    #    @claude mention, require the comment to be on a pull request, and require the
+    #    author to already have write access. Without the author_association check, any
+    #    outside contributor could trigger a privileged run by commenting.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      ((github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+       contains(github.event.comment.body, '@claude') &&
+       (github.event_name == 'pull_request_review_comment' || github.event.issue.pull_request) &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Is the API key configured?
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: echo "present=${ANTHROPIC_API_KEY:+true}" >> "$GITHUB_OUTPUT"
+
+      - name: Claude review
+        if: steps.key.outputs.present == 'true'
+        # Pinned to a commit SHA, not a tag. `@v1` is mutable: whoever can move that tag
+        # would change what runs here, with ANTHROPIC_API_KEY and pull-requests: write in
+        # hand. The SHA below is what refs/tags/v1 resolved to on 2026-10-25 - resolved,
+        # but NOT source-audited. Review the action before this becomes a merge gate, and
+        # let Dependabot bump it.
+        uses: anthropics/claude-code-action@42619cb7a75ded196ded275cdd529a35178bfd2c # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request against REVIEW.md in the repository root. It is the
+            review policy: apply all eight passes in order, use its severity definitions,
+            and respect its nit cap of 5 and its exclusions.
+
+            Also read CLAUDE.md, and docs/sdlc/<feature>/spec.md and plan.md if this PR has
+            them - pass 6 is conformance against those committed artifacts.
+
+            Post findings as inline comments, ranked blockers first. Each finding needs the
+            concrete failure scenario that produces wrong behaviour, not a suspicion. If
+            there are no blockers, say so plainly rather than padding the list.
+
+            Do not approve the pull request. A human code owner approves the merge.

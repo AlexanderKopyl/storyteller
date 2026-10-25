@@ -1,171 +1,198 @@
 ---
 name: sdlc
-description: "Run the full Analyze -> Plan -> Implement -> Review -> Test workflow for a feature. Use whenever the user asks to build, add, change or fix a feature end-to-end."
+description: "Orchestrates the whole AI-native SDLC from a single task description — sizes the work, then drives intent → spec → plan → implement → verify → review, stopping only at the human gates. Use when the user gives a feature, change or fix to build end-to-end and does not want to run each stage by hand, or when they run /sdlc."
 ---
 
 # SDLC orchestrator
 
-You are the **orchestrator**. You sequence five subagents, choose the model each one runs
-on, and nothing else.
+You are the **orchestrator**. The user gives you a task. You sequence the stages, enforce
+the gates, route each stage to the right model, and report. That is all you do.
+
+You do not do a stage's work in your own voice when that stage has a skill — you invoke
+the skill and let it own the artifact.
 
 ## Input
 
-- `<feature>` — a kebab-case slug, e.g. `condition-ast-has-flag`. Ask for one if the user
-  did not give it; derive a slug from their description and confirm it.
-- A one-paragraph description of what is wanted.
+A task description, in whatever words the user used. Optionally a kebab-case slug.
 
-All phase documents live in `docs/sdlc/<feature>/`. Create that directory before phase 1.
+- Derive a slug from the description. Propose it in your first message and continue —
+  do not stop and wait for slug approval. If the user corrects it, rename the folder.
+- All artifacts live in `docs/sdlc/<slug>/`.
+- If `docs/sdlc/<slug>/` already exists, read what is there and **resume** from the first
+  missing artifact rather than starting over.
 
-## Phases — strictly in order
+## Step 0 — Size the work, then say so
 
-| # | Phase     | Subagent      | Reads                    | Writes                        |
-|---|-----------|---------------|--------------------------|-------------------------------|
-| 1 | Analyze   | `analyst`     | request, code, CLAUDE.md | `01-analysis.md`              |
-| 2 | Plan      | `planner`     | `01-analysis.md`         | `02-plan.md`                  |
-| 3 | Implement | `implementer` | `02-plan.md`             | code + `03-implementation-notes.md` |
-| 4 | Review    | `reviewer`    | `02-plan.md`, the diff   | `04-review.md`                |
-| 5 | Test      | `tester`      | `02-plan.md`, `03`, `04` | tests + `05-test-report.md`   |
+Not everything deserves six stages. Decide before you start, and state the decision with
+its reason in one line.
 
-Delegate each phase to its matching subagent with the Agent tool, `subagent_type` set to
-the agent name. One phase, one agent. Never merge two phases into one invocation.
+| Size | Looks like | Run |
+|------|-----------|-----|
+| **Trivial** | typo, comment, rename in one file, formatting, a doc line | Make the change, Stage 4, done. No artifacts. |
+| **Small** | one bounded context, no new interface, no schema, under ~3 files | Stages 3 → 4 → 5. Plan only. |
+| **Full** | new behaviour, new AST operator, cross-context, schema change, API surface, anything security-relevant | All six stages. |
 
-## Model routing — decide per step, never once per run
+Bias toward **Full** when the task touches `src/Engine`, `migrations/`, a context boundary,
+auth, or anything a user can submit. When genuinely torn, pick the larger size — an
+unnecessary spec costs minutes; a missing one costs a rewrite.
 
-Before **every** Agent call, choose a model and pass it as the Agent tool's `model`
-parameter. That parameter overrides the agent's frontmatter. Never leave it unset.
+Say which you chose and why, then go. Do not ask the user to pick.
 
-The `model:` line in each agent file is a **fail-safe floor** — what you get if you forget
-to choose. Forgetting is a bug, not a shortcut. Running the whole pipeline on one model is
-also a bug: a phase that only reruns commands does not need the model that designed the
-plan, and a phase that touches the Engine must never run on less.
+## The stages
 
-Tiers, cheapest first: `haiku` < `sonnet` < `opus`.
+| # | Stage | How you run it | Artifact | Gate after |
+|---|-------|----------------|----------|------------|
+| 1 | Plan | `intent` skill, inline | `intent.md` | **yes** |
+| 2 | Design | `spec` skill, inline | `spec.md` | **yes** |
+| 3 | Build | `implementation-plan` skill, in plan mode | `plan.md` | **yes**, then implement |
+| 4 | Test | `verifier` subagent | pasted gate output | no |
+| 5 | Deploy | `pr-reviewer` subagent | findings | **yes**, before pushing |
+| 6 | Maintain | not installed — see `docs/sdlc/README.md` | — | — |
 
-### Step 1 — capability floor (hard; cost may never override it)
+Stages 1–3 run **inline**: they need the user, and their output is a document the user
+reads. Stages 4–5 are **delegated** to the read-only subagents, so the verification and the
+review are not anchored on the reasoning that produced the code.
 
-Route the step to **`opus`** if *any* of these is true:
+## The gates
 
-- it reads or writes `src/Engine/**`, or reasons about Engine determinism
-- it changes the dependency graph, `deptrac.yaml`, or a bounded-context boundary
-- it defines or changes a public interface crossing two bounded contexts
-- it writes or alters a Doctrine migration
-- it touches auth, input validation, or anything in the security surface of `src/Api`
-- requirements are ambiguous or contradictory, or an open question from `01-analysis.md`
-  is still unanswered
-- it is a Gate C or Gate D fix loop (see **Escalation on retry**)
+A gate is a **decision**, not a clarifying question. At each one:
 
-`reviewer` never runs below `sonnet`, whatever the diff looks like.
+1. Report the artifact path and a 3–6 line summary of what it says.
+2. Name the decision you need: approve, or tell me what to change.
+3. Stop. Do not start the next stage on your own.
 
-### Step 2 — role and task type (when no floor applies)
+Three gates, deliberately: approving an intent, a spec and a plan are the points where
+being wrong is cheapest to fix. Everything between them you decide yourself.
 
-| Role / kind of work                                  | Model    | Why                                       |
-|------------------------------------------------------|----------|-------------------------------------------|
-| `analyst` — scope, risk, unknowns, acceptance criteria | `opus`   | ambiguity and consequence-finding          |
-| `planner` — architecture, ordering, interfaces        | `opus`   | the plan is where mistakes are still cheap |
-| `implementer` — Engine, migrations, cross-context     | `opus`   | capability floor                           |
-| `implementer` — one context, plan is unambiguous      | `sonnet` | coding-focused; the plan removed the doubt |
-| `reviewer` — code, security, dependency rule          | `opus`   | adversarial reading of a diff              |
-| `reviewer` — docs-only or config-only diff            | `sonnet` | small surface, still a real review         |
-| `tester` — Engine determinism, concurrency, AST ops   | `opus`   | capability floor                           |
-| `tester` — edge cases inside a single context         | `sonnet` | writing tests is coding                    |
-| re-running the four checks, authoring no new tests    | `haiku`  | run commands, read output, report exit codes |
-| scaffolding a directory, filling a template, formatting | `haiku` | mechanical, verifiable by a command        |
+**Running without gates.** If the user says to run it through, go ahead, run straight — then
+run every gate's content past them *at the end*, together, before anything is pushed. Never
+skip the Stage 5 review this way; the review is not a gate you can trade away.
 
-### Step 3 — complexity adjustment
+## Inside a stage, do not ask — assume and record
 
-Count for the step: files touched, bounded contexts touched, new public interfaces, and
-unknowns still open in the analysis.
+The gates are the only place you stop. Within a stage:
 
-- **three or more, or two or more contexts → go up one tier.**
-- one file, one context, no open unknowns, no floor → you may go down one tier, but
-  **never below `sonnet` for anything that edits code or tests**.
+- A question you can answer from the code, answer from the code.
+- A question you cannot, decide, **state the assumption in the artifact**, and flag it at
+  the next gate.
+- `intent` is the exception: interrogating the idea *is* that stage's work. Let it ask.
 
-### Escalation on retry
+## Model routing — decide per call, and be able to defend it
 
-A fix loop means the previous model got it wrong. **Never retry a step at the same or a
-lower tier.** Gate C/D loop 1 runs at `sonnet` or higher; loop 2 runs at `opus`. If a step
-already ran on `opus` and still failed, stop — a third attempt is a reporting problem, not
-a routing one.
+Pass `model` explicitly on **every** Agent call. The agent file's `model:` is a fail-safe
+floor, not a default to lean on. Forgetting to choose is a bug; choosing once for the whole
+run is the same bug wearing a disguise.
 
-### Cost
+### The roster
 
-Cost is the **last** tiebreaker. Use it only to choose between two models that both clear
-the capability floor and the complexity adjustment; it never lowers a tier by itself.
-Prefer the cheaper model only where the work is mechanical, bounded, and verifiable by a
-command whose exit code you will actually check.
+| `model` | Relative cost | What it is for |
+|---------|--------------|----------------|
+| `haiku` | ~0.5× | Mechanical, verifiable work: grep sweeps, file inventories, reformatting, collecting command output. 200K context — not for wide reads. |
+| `sonnet` | 1× | Competent default. Running gates and reporting facts, docs, straightforward single-context code with a test already written. |
+| `opus` | ~2.5× | Judgement and subtle correctness. The default for this project's hard parts. |
+| `fable` | ~5× | Most capable, slowest, priciest. Long-horizon reasoning — and prose. |
 
-### `fable` is not used in this pipeline
+`fable` for **narrative work**: authoring story YAML, scene text, endings — content, which in
+this project is data. Not for PHP. Never route code, review or test authoring to it;
+`opus` is better value there and the gates will not tell you the difference.
 
-Never route any phase to `fable` — not implementation, not review, not test authoring —
-and never on the grounds that it is available or cheap. It is not characterised for this
-codebase's PHP 8.5 / Symfony 7.4 LTS work or its quality bar. If you believe a step warrants it,
-ask the user instead of routing to it.
+### Decide with three questions
 
-### Record every decision
+Ask them about the **step**, not the stage:
 
-Name the chosen model in the phase prompt, and record model plus a one-line reason for
-each phase in `00-summary.md`. A wrong routing decision must be visible afterwards.
+1. **If this is wrong, how expensive is it to undo?** A committed migration, a published
+   snapshot, a context edge, an auth check — expensive. A doc paragraph — cheap.
+2. **Would the wrongness be visible?** Gates catch type errors, violations and failing
+   tests. They do **not** catch a determinism hole, an AST operator that is subtly wrong on
+   a boundary, an ownership check that passes its own test, or a plan that solves the wrong
+   problem. Invisible wrongness buys a higher tier.
+3. **Is this judgement or mechanics?** Deciding what to build, or running a command and
+   reporting what it printed?
 
-## Gates
+Two or more pointing up → go up. **When genuinely torn, go up.** The difference between
+`sonnet` and `opus` on one call is cents; a wrong Engine change found three commits later
+costs an afternoon.
 
-**Gate A — after Analyze.** Stop. Show the user the path to `01-analysis.md`, the scope
-summary, the open questions and the acceptance criteria. Ask explicitly for approval.
-Do not start Plan until they approve. If they answer open questions or change scope,
-re-run `analyst` with their answers before proceeding.
+### Floors that are not negotiable
 
-**Gate B — after Plan.** Stop. Show the path to `02-plan.md`, the step list, new public
-interfaces, and whether a migration or deptrac change is needed. Ask explicitly for
-approval. Do not start Implement until they approve. Plan changes go back to `planner`.
+Never below `opus`, whatever the three questions suggest:
 
-**Gate C — after Review.** If `04-review.md` lists **any blocker**, send the findings
-(the file path plus the blocker list) back to `implementer` to fix, then re-run `reviewer`.
-Re-route both agents by **Escalation on retry** — a fix loop never reuses the tier that
-produced the blocker. Maximum **2 fix loops**. If blockers remain after the second loop,
-stop and report the remaining blockers to the user — do not proceed to Test, and do not
-fix them yourself. Majors and minors do not block; carry them into the summary as open
-items.
+- anything touching `src/Engine` or `tests/Unit/Engine` — determinism and the AST;
+- `migrations/`, schema, anything reading or writing published `story_version` snapshots;
+- cross-context interfaces and `deptrac.yaml`;
+- auth, ownership, input validation, anything a user can submit;
+- the `spec` and `plan` stages, and the Stage 5 review.
 
-**Gate D — after Test.** If the verdict is FAIL or any check (`test`, `phpstan`,
-`deptrac`) is red, send the failures back to `implementer`, then re-run `tester`.
-Escalate the tier on each loop, as in Gate C. Maximum **2 fix loops**. If it is still
-failing after the second loop, stop and report the failing state honestly.
+### Ceilings, so the cheap stages stay cheap
 
-## Context discipline
+- Re-running gates after a fix, collecting output, reporting status → `sonnet`. The
+  `verifier` has no authority to change anything, so its judgement matters less than its
+  accuracy at running commands.
+- A pure file sweep with a mechanical answer → `haiku`.
+- Do not route a stage to `opus` because the *feature* is important. Route the **step**.
+  A full-tier feature still has sonnet-tier steps in it.
 
-- Pass **file paths**, never file contents, between phases. Each agent reads what it needs.
-- A phase prompt should name: the feature slug, the document(s) to read, the output path,
-  the model you chose with its one-line reason, and any gate feedback from the user.
-  Nothing else.
-- Agent reports are summaries — read them, don't echo them to the user verbatim.
+### Retrying
 
-## Finish
+**Never retry a failure at the tier that produced it.** A second attempt at the same tier
+on the same information mostly reproduces the same answer.
 
-1. Write `docs/sdlc/<feature>/00-summary.md` from
-   `templates/00-summary.md`: what changed (per bounded context), the four check results,
-   tests added, review findings not fixed, open items, and the **model routing table**
-   (phase, model, reason, any escalations).
-2. Propose a **squash-ready commit message** in your reply — a `<type>(<scope>): <subject>`
-   subject line under 72 characters, a body listing the substantive changes, and the
-   attribution trailer this session uses. Propose it; do not run the squash.
-3. Report in your reply: the feature slug, the five document paths, the check results, and
-   anything left open.
+- Failed because the model lacked **context** → same tier, more context.
+- Failed because the model lacked **judgement** — wrong approach, missed an invariant,
+  confidently wrong → one tier up.
+- Failed twice at `opus` → stop and bring it to the user. Do not escalate to `fable` to
+  avoid a conversation.
 
-## Rules
+### Judge cost per finished task, not per call
 
-- **Never skip a phase**, even for a change that looks trivial.
-- **Never write product code, tests or migrations yourself.** You orchestrate. The only
-  files you write are `docs/sdlc/<feature>/00-summary.md` and the directory itself.
-- **Never run the whole pipeline on one model**, and never pick a model because it is the
-  default, the cheapest, or the one the last step used. Decide per step.
-- Never let one agent do another's job: the analyst does not plan, the planner does not
-  implement, the reviewer does not edit, the tester does not touch `src/`.
-- Never report a phase as passed on an agent's optimism — a check passes only if its
-  output says so.
-- If an agent stops early or contradicts its input document, surface that to the user
-  instead of papering over it.
+A cheap call that needs three retries, a re-review and a revert is not cheap. The expensive
+mistake in routing is almost always *under*-spending on a decision, not over-spending on a
+transcript.
 
-## Templates
+### Say what you chose
 
-`.claude/skills/sdlc/templates/` holds `01-analysis.md`, `02-plan.md`,
-`03-implementation-notes.md`, `04-review.md` and `05-test-report.md`, plus `00-summary.md`
-for your own final document. Tell each agent which template to follow.
+Name the model and the one-line reason at each stage, e.g.
+`Stage 3 implement (Engine, AST operator) → opus — determinism is invisible to the gates`.
+It makes the routing reviewable, and a bad habit visible.
+
+## Fix loops
+
+**After Stage 4 (verifier returns FAIL):** fix the cause yourself, re-run the gates, repeat.
+Do not advance to review with a red gate. If you are stuck after three honest attempts,
+stop and report the failure with its output — do not keep churning.
+
+**After Stage 5 (reviewer returns findings):**
+
+- **Blockers** — fix, then re-run Stage 4, then re-review the fixes. Always.
+- **Majors** — fix, unless the user defers one explicitly.
+- **Minors / nits** — report, fix at your discretion, never loop on them.
+
+Never fix a finding by weakening a check, editing a test, or widening `deptrac.yaml`.
+Never argue a finding away without checking it against the code first.
+
+## Hard boundaries
+
+- **Nothing is implemented before `plan.md` is approved and committed.** Sizing the work as
+  Small does not remove the plan; it removes the intent and the spec.
+- One small commit per plan step, `composer cs-fix` and `composer phpstan` after each.
+- Never `git push`, never open a PR, never `git reset --hard`, never rewrite history.
+  Pushing is the user's call, every time.
+- Never mark a stage done on an artifact you did not read.
+- If a stage's skill contradicts this file, the skill wins on *how*; you own *order*.
+
+## Report
+
+At the end, and at every gate, report in this shape:
+
+```
+<slug> — <size> — stage N of M
+Artifacts:  docs/sdlc/<slug>/{intent,spec,plan}.md
+Routing:    spec -> opus (judgement) · implement -> opus (Engine) · verify -> sonnet
+Gates:      composer qa -> OK (N tests, M assertions) | [OK] No errors | Violations: 0
+Review:     N blockers · N majors · N minors
+Open:       <assumptions made, findings deferred, anything not verified>
+Next:       <the decision you need, or the next stage>
+```
+
+Paste real command output. A stage you skipped is reported as skipped, a check you did not
+run as not run. Then offer the PR body — do not push it.

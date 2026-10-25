@@ -36,14 +36,26 @@ Doctrine and HTTP types must never appear inside `src/Engine`.
 
 ## Quality bar (all four must pass before anything is considered done)
 
+One command is the feedback loop:
+
 ```bash
-composer test       # PHPUnit — unit tests for Engine are mandatory
-composer phpstan    # PHPStan level 8, no baseline additions without a note
-composer cs-fix     # php-cs-fixer, PSR-12
-composer deptrac    # dependency rule check
+composer qa         # cs-check -> phpstan -> deptrac -> test; non-zero on any failure
 ```
 
-Other commands: `php bin/console ...` (Symfony CLI), `docker compose up -d` (Postgres).
+Individually, when isolating a failure — with the output a healthy run prints:
+
+| Command | Healthy output |
+|---------|----------------|
+| `composer test` | `OK (N tests, M assertions)` — unit tests for Engine are mandatory |
+| `composer phpstan` | `[OK] No errors` — level 8, no baseline additions without a note |
+| `composer cs-check` | no diff, exit 0 (`composer cs-fix` writes) |
+| `composer deptrac` | `Violations: 0`, `Uncovered: 0` |
+| `composer coverage` | unit suite, coverage scoped to `src/Engine` |
+
+**Never claim done, fixed or passing without running the command in this session and
+pasting its real output.** A command you did not run is reported as not run.
+
+Other commands: `php bin/console ...` (Symfony CLI), `make up` / `make qa` (Docker).
 
 ## Standing rules
 
@@ -56,11 +68,45 @@ Other commands: `php bin/console ...` (Symfony CLI), `docker compose up -d` (Pos
    the API must therefore never pass unvalidated data into it.
 6. Database changes go through Doctrine migrations — never edit a committed migration.
 7. Small commits, one logical step each. Don't mix refactor and behaviour change.
-8. Follow the SDLC workflow (`/sdlc`) for any non-trivial feature: Analyze → Plan →
-   Implement → Review → Test. Phase documents live in `docs/sdlc/<feature>/`.
-   The orchestrator picks each phase's model per step — Engine, migrations,
-   cross-context interfaces and security always run on the strongest tier.
+8. Follow the AI-native SDLC (`docs/sdlc/README.md`) for any non-trivial feature — `/sdlc`
+   runs the whole chain from one task description. Each stage commits one artifact the
+   next stage reads, in `docs/sdlc/<feature>/`: `intent.md` → `spec.md` → `plan.md` →
+   verified diff → review findings. Nothing is implemented before an approved, committed
+   `plan.md`.
 9. Don't add dependencies without saying why in the plan document first.
+
+## The AI-native SDLC
+
+**`/sdlc <what you want built>`** is the entry point: it sizes the work, then drives every
+stage below, stopping only at the three gates. Run a stage by hand with its own command
+when you want just that stage.
+
+| Stage | Command | Artifact | Skill |
+|-------|---------|----------|-------|
+| 1 Plan | `/intent` | `docs/sdlc/<feature>/intent.md` | `intent` |
+| 2 Design | `/spec` | `docs/sdlc/<feature>/spec.md` | `spec` |
+| 3 Build | `/plan` | `docs/sdlc/<feature>/plan.md` | `implementation-plan` |
+| 4 Test | `/verify` | pasted gate output | `verification` |
+| 5 Deploy | `/review` | PR findings | `REVIEW.md`, `pr-reviewer` agent |
+| 6 Maintain | — | a new `intent.md` | not installed yet — see the README |
+
+Policy skills load themselves when the work touches them: `engine-purity`,
+`context-boundaries`, `api-input-validation`, `doctrine-migrations`. They are constraints
+applied while writing, not a checklist for review.
+
+Hooks in `.claude/hooks/` enforce what must hold without exception: writes to `vendor/`,
+`var/` and `.env*` are denied, a committed migration cannot be edited, `tests/` is frozen
+while `var/freeze-tests` exists, and PHP files are formatted on write.
+
+`REVIEW.md` is the PR review policy. `docs/sdlc/evals.md` regression-tests this
+configuration — add a case whenever it is corrected.
+
+## Things Claude gets wrong
+
+When Claude makes the same mistake twice, the correction goes here — not into a third
+review comment. Keep each entry to one or two lines, and delete entries that go stale.
+
+- *(nothing recorded yet)*
 
 ## CODEBASE NAVIGATION POLICY
 

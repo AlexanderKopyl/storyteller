@@ -1,0 +1,53 @@
+name: QA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    name: composer qa
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: storyteller
+          POSTGRES_USER: storyteller
+          POSTGRES_PASSWORD: storyteller
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U storyteller -d storyteller"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      APP_ENV: test
+      DATABASE_URL: "postgresql://storyteller:storyteller@127.0.0.1:5432/storyteller?serverVersion=16&charset=utf8"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo, pdo_pgsql, intl, mbstring
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@v3
+
+      # One command is the loop, and it is the same one engineers run locally:
+      # cs-check -> phpstan -> deptrac -> test, non-zero on any failure.
+      - name: Run the quality gates
+        run: composer qa

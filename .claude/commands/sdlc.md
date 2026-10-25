@@ -1,19 +1,24 @@
 ---
-description: Run the full Analyze -> Plan -> Implement -> Review -> Test workflow for a feature
-argument-hint: <feature-slug> <description>
+description: "Build a task end-to-end: intent -> spec -> plan -> implement -> verify -> review"
+argument-hint: "<what you want built>  [--auto]"
 ---
 
-Run the `sdlc` skill for feature: $ARGUMENTS
+Run the `sdlc` skill for: $ARGUMENTS
 
-Instructions:
+- If `$ARGUMENTS` is empty, ask what to build. That is the one thing you cannot assume.
+- Otherwise derive a kebab-case slug, state it, and start. Do not stop to have the slug
+  approved.
+- If `--auto` is present, run every stage without stopping at the gates, then present all
+  the gate decisions together at the end, before anything is pushed. The Stage 5 review
+  still runs.
 
-- If `$ARGUMENTS` is empty or contains no usable feature name, **ask the user for a
-  kebab-case feature name and a one-paragraph description before doing anything else.**
-  Do not invent a slug and proceed.
-- If a description was given but no slug, propose a kebab-case slug derived from it and
-  confirm it with the user.
-- The skill chooses a model per phase and per step automatically; do not pin one
-  model for the whole run, and do not route coding, review or test authoring to
-  `fable`.
-- Then invoke the `sdlc` skill and follow it exactly: all five phases in order, the
-  approval gates after Analyze and Plan, and the fix loops after Review and Test.
+Size the work first and say which size you chose and why — trivial, small or full. Then
+follow the skill: the stages in order, the three gates, and the subagents for verification
+and review.
+
+Choose a model per **step**, not once per run, and name it with its one-line reason as you
+go. Engine, migration, cross-context and security work never drops below `opus`; re-running
+gates does not need it. When torn between two tiers, take the higher one.
+
+Stop at each gate with the artifact path, a short summary and the decision you need.
+Never push and never open a PR — report, and let the user decide.

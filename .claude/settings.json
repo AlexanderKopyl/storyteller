@@ -97,5 +97,44 @@
       "Bash(php -r *)",
       "Bash(php -a*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/protect-paths.sh",
+            "timeout": 15,
+            "statusMessage": "Checking protected paths"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/freeze-tests.sh",
+            "timeout": 15,
+            "statusMessage": "Checking test freeze"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/format-php.sh",
+            "timeout": 60,
+            "statusMessage": "php-cs-fixer"
+          }
+        ]
+      }
+    ]
   }
 }
