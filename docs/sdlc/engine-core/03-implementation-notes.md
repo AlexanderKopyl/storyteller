@@ -1261,3 +1261,69 @@ One used, one removed, seven justified in a line each at their declaration.
 - **Checks:** cs-check 0 of 87 · phpstan `[OK] No errors` · deptrac `Violations 0 /
   Uncovered 0` · test `OK (565 tests, 12200 assertions)`.
 - **Commit:** `fix(engine): reject a positional list where the format requires a map`
+
+### Follow-up loop — deviations
+
+1. **`begin()` is static and takes the graph and the schema** (F2). The review's M1 proposed
+   an instance method `enter(GameState, string, int)`; the user's instruction specified
+   `begin(StoryGraph, VariableSchema, GameState, string, int)`, which is what was built. The
+   staticness follows from the signature rather than being a choice of mine: a method that
+   takes a graph on an object that already holds one leaves two graphs in scope with no rule
+   about which wins. Recorded because the shape is the user's, not the reviewer's.
+2. **The five minors are five commits, not one** (F5–F9). The instruction says one commit per
+   numbered item and groups the minors as item 5; CLAUDE.md rule 7 says one logical change
+   per commit. A message reword, a purity-scan extension, a validation gap, a docblock and an
+   API cleanup are five unrelated changes, so they were split. No scope was added or dropped.
+3. **`assertState()` rejects an undeclared name while `StateDiff` skips one** (F1). Both
+   policies are intended and now documented at both sites; see F1 for the reasoning. Flagged
+   because a reader meeting them a year from now will otherwise read it as an inconsistency.
+4. **One claim of mine was false and is corrected in the same commit** (F6): PHPStan does not
+   verify `@phpstan-assert-if-true` against the method body. Found by probe, not by review.
+5. **Nothing was escalated.** No step in this loop touched a migration, the `src/Api`
+   security surface, or a public interface crossing two bounded contexts beyond the two the
+   instruction itself specified (`VariableSchema::assertState()`, `Transition::begin()`),
+   both of which were routed at the `opus` floor as required.
+
+## Final check state (after the follow-up loop)
+
+```
+composer cs-check -> exit 0 (Found 0 of 87 files that can be fixed in 0.294 seconds)
+composer phpstan  -> exit 0 ([OK] No errors; level 8 over src, tests, config, public)
+composer deptrac  -> exit 0 (Violations 0 / Skipped violations 0 / Uncovered 0 / Allowed 0 /
+                     Warnings 0 / Errors 0)
+composer test     -> exit 0 (OK, 565 tests, 12200 assertions)
+composer coverage -> exit 0, in the container — src/Engine: Classes 100.00% (45/45),
+                     Methods 100.00% (196/196), Lines 100.00% (691/691)
+composer qa       -> exit 0
+```
+
+`composer qa` exit 0. Before this loop (`dffd765`): 542 tests, 7923 assertions in the
+container, 655/655 lines, 44/44 classes, 189/189 methods. The loop adds 23 tests, 36 lines,
+7 methods and one class — `EngineException`, which had no executable line before
+`withContext()` and therefore was not counted at all. The assertion count moves from ~7.9k to
+~12.2k almost entirely because `EnginePurityTest` asserts once per pattern per Engine file
+and the pattern list grew by 42 names.
+
+Integrity checks, all clean: `phpstan-baseline.neon` absent · `grep -rn phpstan-ignore src
+tests` → 0 · `git diff dffd765..HEAD` touches none of `deptrac.yaml`, `phpunit.xml`,
+`phpstan.neon`, `composer.json`, `.php-cs-fixer.dist.php`, `CLAUDE.md`, `Dockerfile`,
+`.claude/**` · the Engine's purity rules are now machine-held for the environment, object
+identity and I/O as well as for randomness and the clock.
+
+## Left for the tester / reviewer (after the follow-up loop)
+
+- **Everything `00-summary.md` listed as open is closed:** r3/B1-b (F1), M1 (F2), M4 (F3),
+  the r2 docblock (F4) and all five minors (F5–F9). `00-summary.md` itself is not updated by
+  this loop — its "Open items" section is now stale and belongs to whoever closes the feature.
+- **Two new public APIs want a consumer's eyes:** `VariableSchema::assertState()` is an
+  **obligation** on `Play` (call it once per load, before the first `Transition`), and
+  `Transition::begin()` is the only way a story's first scene ever runs. Both are specified in
+  `docs/engine/ast.md`.
+- **`EngineException` is now mutable in one narrow way** — `withContext()` writes
+  `$this->message` once. It is instance state on an in-flight exception, not static state, and
+  the purity reflection guard still passes; worth a reviewer's eye all the same.
+- **`assertState()` has no production call site inside the Engine, by design** (the Engine
+  trusts its inputs). It is the tenth method in the m2 category and is deliberately there.
+- **The `on_enter` error context carries no `choice`.** If an operator later wants "which
+  choice led into this scene", that is a `Play`-level correlation — the turn's `ChoiceMade`
+  event already carries it — not something the Engine should invent.
