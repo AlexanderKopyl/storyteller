@@ -1,0 +1,529 @@
+# 03 — Implementation notes: engine-core
+
+- **Feature slug:** `engine-core`
+- **Plan:** `docs/sdlc/engine-core/02-plan.md`
+- **Date:** 2026-10-25
+
+## Progress
+
+| Step | Status | Commit |
+|------|--------|--------|
+| 1. Wire PCOV line coverage scoped to src/Engine | done | `build: wire PCOV line coverage scoped to src/Engine` (065803d) |
+| 2. The exception family | done | `feat(engine): add the engine exception family` (198fddb) |
+| 3. The `mixed`-narrowing array reader | done | `feat(engine): add the validated array reader for AST parsing` (2b5705d) |
+| 4. VariableType, VariableDefinition, VariableSchema | done | `feat(engine): add VariableType, VariableDefinition and VariableSchema` (0fb54e5) |
+| 5. GameState and StateDiff | done — `GameState` in cd9c837, `StateDiff` unblocked and landed in 095b02e | `feat(engine): add the immutable GameState and schema-backed resolution` (cd9c837) · `feat(engine): add the structural state diff` (095b02e) |
+| 6. The condition AST | done | `feat(engine): add the condition AST and its 13 operators` (a4fbcd1) |
+| 7. The effect AST | done | `feat(engine): add the effect AST and its 8 operators` (82e7904) |
+| 8. `ConditionEvaluator` | done | `feat(engine): add the condition evaluator` (94f5faf) |
+| 9. `EffectApplier` + `EffectResult` | done | `feat(engine): add the effect applier with goto short-circuit semantics` (7ba4c62) |
+| 10. `NextRule` + `NextSceneResolver` | done | `feat(engine): add next-rule resolution with ordered first-match semantics` (13d2cd9) |
+| 11. `StoryGraph` / `SceneNode` / `ChoiceNode` + the double | done | `feat(engine): add the StoryGraph contract that Content will implement` (98e07d2) |
+| 12. The four events | done | `feat(engine): add the four engine events and their serialized shapes` (b4dda04) |
+| 13. `Transition` + `TransitionResult` | done | `feat(engine): add Transition with redirect-budget and visit semantics` (8333176) |
+
+## Step log
+
+### Step 1 — Wire coverage so the 100 % criterion is measurable from the first Engine commit
+
+- **Changed:**
+  - `docker/php/php.ini` — added the pinned `pcov.enabled = 1` / `pcov.directory = /app/src`
+    block with the comment quoted in the plan.
+  - `composer.json` — added the `coverage` script and its description; `qa` left untouched.
+  - `phpunit.xml` — added `<coverage ignoreDeprecatedCodeUnits="true"
+    disableCodeCoverageIgnore="true"/>` directly after `</testsuites>`; `<source>` unchanged.
+  - `Makefile` — added `coverage` to `.PHONY` and the `coverage: guard-running` target.
+- **Tests added:** none (plan specifies no production code changes for this step).
+- **Checks:** `composer cs-fix` ok (0 files fixed) · `composer phpstan` ok (no errors) ·
+  `composer test` 24 passed (unit suite) · `composer deptrac` ok (Violations 0, Allowed 0 —
+  unchanged, `src/Engine` still empty) · `composer qa` exit 0.
+- **Commit:** `build: wire PCOV line coverage scoped to src/Engine` (`065803d`)
+- **Notes / verification evidence:**
+  1. `make build && make up` — image rebuilt (php.ini is `COPY`ed, not bind-mounted),
+     containers started successfully.
+  2. `docker compose exec -T php php --ri pcov`:
+     ```
+     PCOV support => Enabled
+     PCOV version => 1.0.12
+     pcov.directory => /app/src
+     pcov.exclude => none
+     pcov.initial.memory => 65336 bytes
+     pcov.initial.files => 64
+     ```
+     Confirmed as a **configured** value (not auto-detected) via `php --ini`, which shows
+     `/usr/local/etc/php/conf.d/99-storyteller.ini` (the file `docker/php/php.ini` is copied
+     to) in the list of parsed additional `.ini` files, and `cat` of that file inside the
+     container shows the literal `pcov.directory = /app/src` line.
+  3. `docker compose exec -T php composer coverage` — exit code 0:
+     ```
+     PHPUnit 12.5.40 by Sebastian Bergmann and contributors.
+     Runtime:       PHP 8.5.12 with PCOV 1.0.12
+     ......................                                            22 / 22 (100%)
+     OK (22 tests, 2014 assertions)
+     Generating code coverage report in Clover XML format ... done [00:00]
+     Generating code coverage report in HTML format ... done [00:00.006]
+     Code Coverage Report:
+       Summary:
+       Classes:        (0/0)
+       Methods:        (0/0)
+       Lines:          (0/0)
+     ```
+     `--coverage-filter src/Engine` was **not** rejected even though `src/Engine` currently
+     holds only `.gitkeep`; PHPUnit reported an empty (0/0) summary rather than erroring, so
+     the documented fallback (dropping the filter and re-verifying filtered form at the end
+     of step 2) was not needed.
+  4. `docker compose exec -T php composer qa` — exit code 0, ~1s wall time inside the
+     container (unit suite 24 tests / 2020 assertions, cs-check/phpstan/deptrac all green) —
+     unchanged from pre-step-1 behaviour, confirming the `qa` script itself was not touched
+     and its runtime did not double.
+  - `git check-ignore -v var/coverage/html` → `.gitignore:2:/var/	var/coverage/html` —
+    confirms `/var/` on line 2 already ignores `var/coverage`; **no `.gitignore` change
+    made**, as specified.
+  - Neither `<coverage>` attribute was rejected by PHPUnit 12.5's XSD, so no attribute was
+    dropped.
+
+### Step 2 — The exception family
+
+- **Written:**
+  - `tests/Unit/Engine/Exception/EngineExceptionTest.php` **first** (ran `composer test`: 23
+    errors / 9 failures, all "class not found" or "directory does not exist" — the intended
+    reason), then the 9 files under `src/Engine/Exception/`: `EngineException` (abstract,
+    extends `\RuntimeException`), `MalformedNodeException`, `UnknownOperatorException`,
+    `UnknownVariableException`, `TypeMismatchException`, `UnknownSceneException`,
+    `ChoiceUnavailableException`, `NoNextSceneException`, `RedirectLoopException`.
+- **Tests added:** 5 test methods, 36 cases after provider expansion — ancestry of all 8
+  concrete classes, the abstract root and its parent, the directory-contents guard, the 13
+  available named constructors, and the no-framework-ancestor scan.
+- **Commit:** `feat(engine): add the engine exception family` (`198fddb`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0 · `test` 56 passed
+  (2179 assertions) · `coverage` **100.00 % lines (13/13)**, classes 100.00 % (7/7).
+- **Deviations:** two, both recorded in the commit message.
+  1. **`TypeMismatchException::value()` / `::notNumeric()` were deferred to step 4.** Both are
+     typed on `State\VariableType`, which does not exist until step 4, so step 2 cannot
+     declare them. Resolved with the same mechanism the plan itself uses for
+     `VariableSchema::resolve()` (deferred from step 4 to step 5). The plan's own step-2 test
+     catalogue says "all **13** named constructors" while the interface list declares 15,
+     which is exactly this split (15 − 2), so the deferral matches the plan's intent rather
+     than working around it. End state after step 4 is identical to the plan.
+  2. **Test mechanics, not design:** the ancestry assertions read `class_parents()` instead of
+     `assertTrue(is_subclass_of(...))`. PHPUnit's assertions carry PHPStan `@phpstan-assert`
+     annotations, so the first such call narrows `$class` and makes the second a statically
+     proven tautology (`staticMethod.alreadyNarrowedType`), which is a level-8 error. The
+     const list is typed `list<class-string>` rather than `list<class-string<EngineException>>`
+     for the same reason: the narrower type would let the analyser prove what the test exists
+     to check at runtime.
+- **Evidence recorded for AC-4 (`deptrac` `Allowed` count) — see *Deviations* below.**
+
+### Step 3 — The `mixed`-narrowing array reader
+
+- **Written:** `tests/Unit/Engine/Support/ArrayReaderTest.php` **first** (34 errors, class not
+  found), then `src/Engine/Support/ArrayReader.php` with all 17 methods from the plan's
+  interface, unchanged in name, signature and return type.
+- **Tests added:** 24 test methods, 34 cases — happy path, missing key and wrong type for
+  every reader; float / bool / numeric-string rejection for `requireInt`; zero and negative
+  for `requirePositiveInt`; the `optionalPositiveInt` default *and* validation of a present
+  value; all four scalars plus `null` and `[]`; `requireNumber`'s string/bool rejection; a map
+  passed where a list is required and a scalar element inside a list; the `(string) $k` key
+  cast; `rejectUnknownKeys`; and the `a.b.c` path produced by `child()`.
+- **Commit:** `feat(engine): add the validated array reader for AST parsing` (`2b5705d`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors, **no `phpstan-baseline.neon`, no
+  `@phpstan-ignore` anywhere in `src` or `tests`** · `deptrac` 0/0/0/0 · `test` 90 passed
+  (2281 assertions) · `coverage` **100.00 % lines (104/104)**, `ArrayReader` 91/91.
+- **Deviations:** none. The level-8 narrowing strategy held exactly as planned — `is_*()`
+  checks plus element-by-element copies into a fresh array, with no suppression required.
+  Two behaviours the plan left implicit are documented in the class: `has()` means
+  present-**and-not-null**, matching the `??` narrowing the plan's own sample code uses, and
+  `requireArrayList()` / `requireStringList()` enforce `array_is_list()` so an authored map
+  cannot pass as a list.
+
+### Step 4 — VariableType, VariableDefinition, VariableSchema
+
+- **Written:** `tests/Unit/Engine/State/VariableTypeTest.php`,
+  `VariableDefinitionTest.php`, `VariableSchemaTest.php` **first** (22 errors / 9 failures),
+  then `src/Engine/State/VariableType.php`, `VariableDefinition.php`, `VariableSchema.php`.
+  `TypeMismatchException`'s two named constructors (deferred from step 2) landed here with
+  their provider cases in `EngineExceptionTest`.
+- **Tests added:** 19 test methods, 44 cases — the exhaustive 4×4 acceptance grid (`Float`
+  does **not** accept an int), `isNumeric()`, the rejected default, the definition round trip,
+  unknown type name / unknown key / missing default, key-sorting, duplicate names, unknown
+  variables through `typeOf` / `defaultOf` / `assertAccepts`, `empty()` and the schema round
+  trip.
+- **Commit:** `feat(engine): add VariableType, VariableDefinition and VariableSchema`
+  (`0fb54e5`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0 · `test` 134 passed
+  (2369 assertions) · `coverage` **100.00 % lines (160/160)**.
+- **Deviations:** one, additive. **`MalformedNodeException::duplicateKey(string $path, string
+  $key)` was added.** The plan fixes the *exception class* for the duplicate-variable-name
+  case ("duplicate name => MalformedNodeException") but names no constructor for it, and none
+  of the five declared ones fits: `unknownKey()` would produce "key X is not allowed here" for
+  a key that is both allowed and present twice. The same factory will serve the duplicate
+  choice keys the plan requires in step 11. No serialized format is affected.
+  `VariableSchema::resolve()` is absent by the plan's own instruction and lands in step 5.
+  Reserved words worked as enum case names (`Int`, `Float`, `String`, `Bool`), so the
+  documented `IntType` fallback was not needed.
+
+### Step 5 — GameState (and `VariableSchema::resolve()`); **StateDiff blocked**
+
+- **Written:** `tests/Unit/Engine/State/GameStateTest.php` and three `resolve()` cases
+  appended to `VariableSchemaTest` **first** (22 errors / 9 failures), then
+  `src/Engine/State/GameState.php` and `VariableSchema::resolve()`.
+  **`src/Engine/State/StateDiff.php` was not written — see the blocker below.**
+- **Tests added:** 18 test methods, 31 cases — `initial()` empty and marking nothing;
+  key-sorting of vars / inventory / visited; flags sorted and de-duplicated; a 50-entry
+  unbounded history with duplicates intact; `visited` and `history` agreeing after a mixed
+  sequence; immutability of all `with*` methods; zero-removal in `withItem`; `var()` throwing;
+  the `v: 1` envelope and key order; an unknown version; each of the six keys dropped in turn;
+  an unknown key; three round trips (full, empty, float+bool); the integer-like item key
+  through `json_encode`/`json_decode`; and order-independence of the `with*` sequence.
+- **Commit:** `feat(engine): add the immutable GameState and schema-backed resolution`
+  (`cd9c837`) — the subject deliberately does not say "and its structural diff", because the
+  diff is not in it.
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0 · `test` 165 passed
+  (2453 assertions) · `coverage` **100.00 % lines (224/224)**.
+- **Blocker (plan defect, reported not improvised):** `StateDiff`'s `vars` category is frozen
+  as `array<string, array{from: int|float|string|bool, to: int|float|string|bool}>` — `from`
+  is a required non-null scalar. A variable that is **absent** from the before-state and
+  present in the after-state has no `from`. This is not a corner case: `GameState::initial()`
+  starts with no vars at all (plan decision P5 — the default lives in the schema, consulted at
+  read time), so the **first `set` of every variable in every story** hits it. `inventory` and
+  `visited` have a natural zero via `itemQty()` / `visitCount()`; `vars` has none, and `var()`
+  throws for an absent name. Choosing what `from` is there means inventing a shape in a format
+  that crosses into Play's event log as the `EffectsApplied` payload — which the plan itself
+  calls a plan defect rather than an implementer's call. Three candidate resolutions, for the
+  planner or the user to pick:
+  1. widen the shape to `from: int|float|string|bool|null`, `null` meaning "the state carried
+     no value yet" — information-preserving, but changes the frozen payload;
+  2. keep the shape and omit variables absent before — type-preserving, but the first `set` of
+     every variable disappears from the event log, which contradicts D-DIFF's "records
+     outcomes";
+  3. give `StateDiff::between()` the `VariableSchema` so `from` is the schema default —
+     consistent with P3 / AC-15 ("never null") and keeps the declared scalar type, but changes
+     `between()`'s signature and couples the diff to the schema.
+  Nothing in steps 2–7 depends on `StateDiff`: its only consumers are `EffectApplier`
+  (step 9) and the `EffectsApplied` event (step 12), both outside this run. `GameState` does
+  not reference it. So the blocker costs nothing until step 9.
+
+### Step 6 — The condition AST
+
+- **Written:** `tests/Unit/Engine/Ast/ConditionOpTest.php` and `ConditionTest.php` **first**
+  (8 errors / 30 failures), then `src/Engine/Ast/ConditionOp.php`, `Condition.php`,
+  `Comparison.php`, `FlagCheck.php`, `HasItem.php`, `Visited.php`, `LogicalAnd.php`,
+  `LogicalOr.php`, `LogicalNot.php`.
+- **Tests added:** 16 test methods, 72 cases — the 13-value case list and the
+  comparison/ordering partition; every documented shape parsed and round-tripped; operand
+  accessors; `qty`/`times` defaulting to 1 and rejecting zero, negatives, floats and numeric
+  strings; three-level nesting; `not` with a list and `and` with an object; the empty `of`;
+  an unknown operator; a missing and a non-string `op`; each required key dropped in turn;
+  unknown keys per node type; the nested error path `condition.of[1].of`; and a
+  caller-supplied path.
+- **Commit:** `feat(engine): add the condition AST and its 13 operators` (`a4fbcd1`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0 · `test` 243 passed
+  (2682 assertions) · `coverage` **100.00 % lines (297/297)**.
+- **Deviations:** two mechanical, neither touching a serialized format.
+  1. **`parse()` is `protected static`, not `private static`.** PHP resolves `private` against
+     the *declaring* class, so `Condition::fromArray()` — running in the parent's scope —
+     cannot call `Comparison::parse()` if it is private. `protected` is the minimum that
+     works, and it is declared `abstract protected static` on `Condition` so every node class
+     must provide it.
+  2. **`parse()` takes the breadcrumb `string $path` as a third argument.** A node with
+     children has to extend the path for them (`condition.of[1]`), and `ArrayReader::$path` is
+     private. The alternative was adding a public `path()` accessor to `ArrayReader`, whose
+     surface is already frozen, committed and at 100 % coverage; passing the path the
+     dispatcher already holds is the smaller change. A `final protected static
+     parseChildren()` helper on `Condition` carries the `of`-list parsing shared by `and` and
+     `or`, including the empty-list rejection (`MalformedNodeException::wrongType(…,
+     'non-empty list', 'empty list')` — the plan fixes the exception class but not the
+     factory).
+
+### Step 7 — The effect AST
+
+- **Written:** `tests/Unit/Engine/Ast/EffectOpTest.php` and `EffectTest.php` **first**
+  (12 errors / 27 failures), then `src/Engine/Ast/EffectOp.php`, `Effect.php`, `SetVar.php`,
+  `Arithmetic.php`, `FlagEffect.php`, `ItemEffect.php`, `GoToScene.php`.
+- **Tests added:** 16 test methods, 62 cases — the 8-value case list and `isArithmetic()`;
+  every documented shape parsed and round-tripped; operand accessors; `add`/`sub` rejecting a
+  numeric string and a bool at parse time and accepting a float; `set` accepting all four
+  scalars; `qty` defaulting to 1 and rejecting zero, negatives, floats and strings; an unknown
+  operator; a missing `op`; each required key dropped in turn; unknown keys per node type; a
+  caller-supplied path; `listFromArray` order, the empty list and the reported position
+  `on_enter[1]`.
+- **Commit:** `feat(engine): add the effect AST and its 8 operators` (`82e7904`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0 violations / 0 skipped /
+  0 uncovered / 0 warnings / 0 errors · `test` 305 passed (2856 assertions) · `coverage`
+  **100.00 % lines (338/338)**.
+- **Deviations:** `parse()` is `protected static` for the same visibility reason as step 6,
+  and takes no path argument because no effect node has children.
+  `testListFromArrayPreservesOrderAndRejectsANonObjectElement` was split: the order half is
+  asserted directly, and the non-object-element half is asserted **through
+  `ArrayReader::requireArrayList()`**, because `listFromArray()`'s declared parameter is
+  `list<array<array-key, mixed>>` and passing a scalar element would be a type violation the
+  test suite is itself analysed for at level 8. The rejection the case name asks for is real
+  and covered; it simply lives one layer down, in the only call path a caller can use.
+
+### Step 8 — The condition evaluator
+
+- **Written:** `tests/Unit/Engine/ConditionEvaluatorTest.php` **first** (31 errors / 8
+  failures, all `Class "Storyteller\Engine\ConditionEvaluator" not found`), then
+  `src/Engine/ConditionEvaluator.php`.
+- **Tests added:** 11 test methods, 40 cases — all 13 operators once satisfied and once
+  unsatisfied against one state; the schema default read end to end; the four ordering
+  operators refused on a `string` and a `bool` variable; `eq` on an `int` variable against
+  `1.0`; exact float equality (`0.1 + 0.2` is not `eq 0.3`, and *is* `eq 0.1 + 0.2`); an
+  unknown variable; `and` / `or` short-circuiting proven by a skipped child that would throw;
+  three-level nesting in both polarities; `has_item` / `visited` below, at and above their
+  threshold with the default of 1; and the two defensive branches.
+- **Commit:** `feat(engine): add the condition evaluator` (`94f5faf`)
+- **Checks:** `cs-fix` 1 fixed (the test) · `phpstan` 0 errors · `deptrac` 0/0/0/0/0/0 ·
+  `test` 344 passed (2913 assertions) · `coverage` **100.00 % lines (371/371)**.
+- **Deviations:** one, structural. **The evaluator has two `default` arms that throw
+  `UnknownOperatorException`.** `match (true)` over `instanceof` arms is a PHPStan level-8
+  error without one (`match.unhandled`, verified by running it), and the condition hierarchy
+  is genuinely open — `Condition` is abstract, not sealed, and `Comparison`'s constructor is
+  public and takes any `ConditionOp`. Rather than suppress the error, both branches are real
+  behaviour and both are covered by tests that construct such a node directly
+  (`new Comparison(ConditionOp::Flag, …)` and a `readonly` anonymous subclass of `Condition`).
+  This is what makes CLAUDE.md's "adding an operator means adding it to the evaluator" fail
+  loudly instead of evaluating to `false`.
+
+### Step 9 — `StateDiff` (step-5 carry-over), then `EffectApplier` and `EffectResult`
+
+Two commits, because they are two logical changes.
+
+- **Written:** `tests/Unit/Engine/State/StateDiffTest.php` **first** (8 errors), then
+  `src/Engine/State/StateDiff.php`; then `tests/Unit/Engine/EffectApplierTest.php` and
+  `tests/Unit/Engine/EffectResultTest.php` **first** (17 errors / 9 failures), then
+  `src/Engine/EffectApplier.php` and `src/Engine/EffectResult.php`.
+- **The step-5 blocker is resolved exactly as the orchestrator decided.**
+  `StateDiff::between(GameState $before, GameState $after, VariableSchema $schema)`: a
+  variable absent from `$before->vars` resolves its `from` through
+  `$schema->resolve($name, $before)`, i.e. the declared default. `from` and `to` stay
+  non-nullable `int|float|string|bool` and the frozen payload shape
+  `array{from: scalar, to: scalar}` is unchanged. Rationale recorded as given: the
+  specification's governing rule for a missing variable — *"Missing var evaluates against the
+  schema default, never null"* — already exists, and the diff is a view of variable state, so
+  it obeys the rule the evaluator obeys. A nullable `from` would introduce the null the spec
+  bans; omitting absent-before variables would hide the first `set` of every variable in every
+  story. Both callers (`EffectApplier::apply()` and `Transition::run()`) already hold a
+  schema, so nothing was re-threaded and no committed code changed.
+- **Tests added:** `StateDiffTest` 8 methods — identical states, `empty()`, vars `from`/`to`,
+  the absent-before variable diffing from its default (and a variable *set to* its default
+  producing no entry at all), flags split with each half omitted when empty, a removed
+  inventory key at `to: 0`, the `visited` category covered directly, and the fixed category
+  order. `EffectApplierTest` 15 methods, 27 cases — all 8 operators against a full state;
+  wrong-typed `set`; `add`/`sub` on a `string` and a `bool` variable; `int + 0.5`;
+  `PHP_INT_MAX + 1`; `remove_item` clamped at 0 with the key dropped; the `qty` default;
+  clearing an absent flag; `goto` leaving state untouched, short-circuiting the rest, and the
+  two-`goto` list; the empty list; and the diff across one phase. `EffectResultTest` 1 method.
+- **Commits:** `feat(engine): add the structural state diff` (`095b02e`) ·
+  `feat(engine): add the effect applier with goto short-circuit semantics` (`7ba4c62`)
+- **Checks:** `cs-fix` 0 then 1 fixed (the test) · `phpstan` 0 errors · `deptrac` 0/0/0/0/0/0 ·
+  `test` 352 then 378 passed (2934 / 2995 assertions) · `coverage` **100.00 % lines (423/423
+  then 459/459)**.
+- **Deviations:** two, both small.
+  1. **`StateDiff::unionOfKeys()` casts keys back to `string`.** PHP stores a
+     decimal-integer-like array key as an `int`, so an item named `"10"` would otherwise reach
+     `itemQty(string $item)` as an `int` and fail under `strict_types`. The same coercion is
+     already documented for `GameState` and pinned by `GameStateTest`.
+  2. **`EffectApplier::arithmetic()` also rejects a non-numeric *value* for a numerically
+     declared variable.** `GameState` carries no schema and validates nothing, so a state
+     built elsewhere can disagree with the declaration; refusing it is both the correct
+     behaviour and what narrows the type for level 8 without a suppression. Covered by its own
+     test. The applier carries the same open-hierarchy `default` arm as the evaluator, for the
+     same reason and with the same kind of test.
+
+### Step 10 — `NextRule` and `NextSceneResolver`
+
+- **Written:** `tests/Unit/Engine/Graph/NextRuleTest.php` and
+  `tests/Unit/Engine/NextSceneResolverTest.php` **first** (7 errors / 6 failures), then
+  `src/Engine/Graph/NextRule.php` and `src/Engine/NextSceneResolver.php`.
+- **Tests added:** 13 test methods — `isFallback()`, the round trip with and without `if`
+  (`if` omitted when null), list order, the empty list, a missing `scene`, an unknown key, the
+  nested error path `next[1].if`, a caller-supplied path, direct construction; and for the
+  resolver: a plain string resolving to itself, first-match-wins with a later rule that would
+  also match, a fallback used only when nothing earlier matched, exhaustion, and the empty
+  list.
+- **Commit:** `feat(engine): add next-rule resolution with ordered first-match semantics`
+  (`13d2cd9`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0/0/0 · `test` 391
+  passed (3033 assertions) · `coverage` **100.00 % lines (483/483)**.
+- **Deviations:** none. The resolver tests `$rule->if === null` rather than calling
+  `isFallback()`, because the explicit null check is what narrows `?Condition` for level 8;
+  `isFallback()` is part of the public contract and is covered by `NextRuleTest`.
+
+### Step 11 — The `StoryGraph` contract, its nodes, and the in-memory double
+
+- **Written:** `tests/Unit/Engine/Graph/ChoiceNodeTest.php`,
+  `tests/Unit/Engine/Graph/SceneNodeTest.php` and a new case in `ArrayReaderTest` **first**
+  (11 errors / 4 failures), then `src/Engine/Graph/ChoiceNode.php`, `SceneNode.php`,
+  `StoryGraph.php`, `ArrayReader::isString()`, and
+  `tests/Unit/Engine/Double/InMemoryStoryGraph.php`.
+- **Tests added:** 13 test methods — the documented full scene parsed and round-tripped;
+  optional keys defaulting to empty; `next` as both a string and a rule list; `hasChoice()` /
+  `choice()` and the absent key; duplicate choice keys; missing and unknown keys; the nested
+  error paths `scene.on_enter[0]`, `scene.choices[1]`, `scene.next[0]`,
+  `choice.effects[1]`; and `isString()` against a string, a list, a null and an absent key.
+- **Commit:** `feat(engine): add the StoryGraph contract that Content will implement`
+  (`98e07d2`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0/0/0 · `test` 406
+  passed (3097 assertions) · `coverage` **100.00 % lines (541/541)**. AC-10:
+  `grep -rl 'implements StoryGraph' src` returns nothing; the only implementation is the
+  double under `tests/`.
+- **Deviations:** one, additive. **`ArrayReader::isString(string $key): bool` was added.**
+  `next` is the format's one authored union (a scene name or a rule list), and its reader has
+  to know which it is holding before reading it. The alternatives were to let `SceneNode`
+  touch the raw decoded array — which breaks the plan's own rule that `ArrayReader` is the
+  single narrowing point — or to catch a `MalformedNodeException` and retry, which uses an
+  exception for control flow. One four-line method with its own test case is the smaller
+  change. No existing signature changed.
+
+### Step 12 — The four engine events
+
+- **Written:** `tests/Unit/Engine/Event/EngineEventsTest.php` **first** (5 errors), then
+  `src/Engine/Event/EngineEvent.php`, `EffectPhase.php`, `ChoiceMade.php`,
+  `EffectsApplied.php`, `SceneEntered.php`, `EndingReached.php`.
+- **Tests added:** 5 test methods, 8 cases — the `EffectPhase` case list; every event's
+  `name()` and full serialized shape, with `toArray()['event'] === name()`; `EffectsApplied`
+  embedding a real diff and its phase; a reflection scan proving no event carries a clock; and
+  a case that constructs all four events *inside* the test.
+- **Commit:** `feat(engine): add the four engine events and their serialized shapes`
+  (`b4dda04`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0/0/0 · `test` 414
+  passed (3162 assertions) · `coverage` **100.00 % lines (573/573)**.
+- **Notes:** the constructor-coverage point is worth recording — **PHPUnit data providers run
+  outside the covered test's measurement window**, so events built only in a provider showed
+  their constructors as uncovered (99.48 %). The fix is a test that constructs each event in
+  its own body, not a coverage annotation. `#[CoversClass]` is declared for the five concrete
+  classes; the `EngineEvent` interface has no executable lines and is deliberately not listed.
+
+### Step 13 — `Transition` and `TransitionResult`
+
+- **Written:** `tests/Unit/Engine/TransitionTest.php` and
+  `tests/Unit/Engine/TransitionResultTest.php` **first** (13 errors / 6 failures), then
+  `src/Engine/Transition.php` and `src/Engine/TransitionResult.php`. `run()` follows the
+  plan's 13-step algorithm literally.
+- **Tests added:** 16 test methods — the happy path's state and resting scene; the exact
+  five-event list for an ending turn; `EffectsApplied` emitted twice / once / not at all; a
+  phase whose effects change nothing emitting nothing; a false choice condition; an absent
+  choice key; an unknown current scene; a dangling `next`, a dangling choice `goto` and a
+  dangling `on_enter` `goto`; a choice `goto` overriding the declared `next`; a two-hop
+  `on_enter` redirect; exactly five redirects succeeding with `SceneEntered.redirects === 5`;
+  six throwing; the choice `goto` counting toward the budget (1 + 5 throws); the
+  redirected-through scene unvisited but its effects logged; the visit recorded after
+  `on_enter`; `isEnding` in both directions; and `NoNextSceneException` propagating.
+  `TransitionResultTest` pins the nested wire shape and the empty event list.
+- **Commit:** `feat(engine): add Transition with redirect-budget and visit semantics`
+  (`8333176`)
+- **Checks:** `cs-fix` 0 fixed · `phpstan` 0 errors · `deptrac` 0/0/0/0/0/0 · `test` 433
+  passed (3227 assertions) · `coverage` **100.00 % lines (622/622)**.
+- **Deptrac enforcement probe (run, reverted, not committed).** `use
+  Symfony\Component\Uid\Uuid;` plus a `Uuid::v4()` call was added to `src/Engine/Transition.php`.
+  `composer deptrac` then reported `DependsOnDisallowedLayer  Storyteller\Engine\Transition
+  must not depend on Symfony\Component\Uid\Uuid` with `Violations 1`, **and** `composer test`
+  failed in
+  `BoundedContextLayoutTest::testFrameworkFreeContextsImportNoFrameworkNamespace@src/Engine`.
+  The file was restored from a copy taken before the edit (no `git checkout`, no reset), and
+  both gates were re-verified green. The gate bites.
+- **Deviations:** one, and it is a plan defect rather than a choice. **The planned case
+  `testVisitedIsFalseInsideTheSceneOwnOnEnterOnFirstEntryAndTrueOnReEntry` is not
+  expressible.** Effects carry no conditions — there is no conditional effect operator — so
+  nothing executed *inside* `on_enter` can read `visited` at all, and the difference between
+  incrementing before and after `on_enter` is invisible from within that phase. It is pinned
+  instead by its two observable consequences, which together are equivalent:
+  (i) `testASceneRedirectedThroughIsNotMarkedVisitedButItsEffectsStillApply` — under
+  "increment before `on_enter`" the redirected-through scene *would* appear in `visited` and
+  `history`, so this case discriminates the two designs; and (ii)
+  `testASceneIsNotVisitedUntilAfterItsOwnOnEnter`, which asserts the on_enter
+  `EffectsApplied` precedes `SceneEntered` and then, across two consecutive runs, that a
+  choice guarded on the scene's own visit count becomes available exactly as far as entries
+  have actually happened. **Note for the AST spec (step 16):** D-VISIT's documentation line on
+  the `visited` operator should describe the re-entry rule in terms of *choice conditions and
+  `next` guards*, since `on_enter` cannot branch.
+
+## Deviations from the plan
+
+1. **Step 1 — none.** (Unchanged from the original entry: both edge cases the plan anticipated
+   did not occur.)
+2. **`TypeMismatchException`'s two named constructors moved from step 2 to step 4** — they are
+   typed on `VariableType`, which step 4 creates. Same mechanism the plan applies to
+   `VariableSchema::resolve()`; matches the plan's own "13 named constructors" count for the
+   step-2 provider.
+3. **`MalformedNodeException::duplicateKey()` added** (step 4) — the plan fixes the exception
+   class for the duplicate-name case but no factory, and none of the five declared ones means
+   "declared twice".
+4. **`StateDiff` not implemented in step 5 — now resolved in step 9** (commit `095b02e`).
+   `between()` takes the `VariableSchema` as a third parameter and an absent-before variable
+   diffs from its declared default (candidate 3 of the three offered). Decided by the
+   orchestrator, not by the implementer; full rationale under *Step 9* above. The frozen
+   payload shape is unchanged and no committed code was touched.
+5. **`parse()` is `protected static` and (for conditions) takes the path** — PHP visibility
+   rules make `private` impossible, and `ArrayReader`'s path is private. Internal shape only;
+   no serialized format, no public API changed.
+6. **`composer deptrac` still reports `Allowed 0`, and that is correct** — the plan's AC-4
+   expectation ("non-zero `Allowed`… expect it in the low hundreds… if it is still 0 the
+   analyser is not seeing `src/Engine`. Report it.") rests on a wrong premise, so it is
+   reported rather than engineered around. deptrac never records an intra-layer edge as
+   `Allowed`: `DefaultBehavior/Analyser/MatchingLayersHandler` subscribes at priority **1** and
+   calls `stopPropagation()` when depender and dependee are in the same layer, while
+   `AllowDependencyHandler` — the only thing that creates an `Allowed` rule — subscribes at
+   priority **−100** and therefore never runs for such a pair. Every dependency this feature
+   creates is `Engine -> Engine`, by design (OQ-3 keeps `src/Shared` empty, OQ-4 keeps the
+   exception family inside Engine), so `Allowed` stays 0 for the whole feature. **The
+   falsifiable evidence that the analyser does see `src/Engine` is the analysed-file count: 1
+   file before step 2, 10 after step 2, 49 after step 7.** No `Engine -> Shared` entry exists,
+   as the plan requires. Nothing was added to make the number move.
+7. **Open-hierarchy `default` arms in the evaluator and the applier** (steps 8, 9) — PHPStan
+   rejects `match (true)` over `instanceof` arms without one, and neither AST root is sealed.
+   Both are real behaviour (`UnknownOperatorException`), both are covered by tests that build
+   such a node, and no suppression was added. See *Step 8*.
+8. **`ArrayReader::isString()` added** (step 11) — the `next` union needs its shape inspected
+   before it is read, and all narrowing stays in `ArrayReader`. Additive; no signature changed.
+9. **`EffectApplier` rejects a non-numeric value for a numerically declared variable**
+   (step 9) — `GameState` validates nothing, so a disagreeing state must fail rather than be
+   coerced; it is also what narrows the type for level 8.
+10. **D-VISIT's planned test case is not expressible** (step 13) — effects carry no
+    conditions, so nothing inside `on_enter` can read `visited`. Pinned by its two observable
+    consequences instead. See *Step 13*; this also affects how the `visited` operator should
+    be documented in step 16.
+11. **Test-mechanics adjustments forced by PHPStan level 8 over `tests/`** — `class_parents()`
+   instead of `assertTrue(is_subclass_of(...))`, and `list<class-string>` instead of
+   `list<class-string<EngineException>>`, both because PHPUnit's `@phpstan-assert` annotations
+   would otherwise let the analyser prove the assertions instead of running them. No
+   suppression, no config change.
+
+## Final check state (after step 13)
+
+```
+composer cs-check -> exit 0 (Found 0 of 79 files that can be fixed)
+composer phpstan  -> exit 0 ([OK] No errors; level 8 over src, tests, config, public)
+composer deptrac  -> exit 0 (Violations 0 / Skipped violations 0 / Uncovered 0 / Allowed 0 /
+                     Warnings 0 / Errors 0)
+composer test     -> exit 0 (OK, 433 tests, 3227 assertions)
+composer coverage -> exit 0 — src/Engine: Classes 100.00% (43/43), Methods 100.00% (180/180),
+                     Lines 100.00% (622/622); unit suite OK (431 tests, 3221 assertions)
+```
+
+Integrity checks, all clean: `phpstan-baseline.neon` absent · `grep -rn phpstan-ignore src
+tests` → 0 · no `Symfony|Doctrine|Psr|Monolog|PHPUnit` import in `src/Engine` → 0 · no
+`rand|mt_rand|random_int|shuffle|time|microtime|uniqid` call site in `src/Engine` → 0 ·
+no superglobal → 0 · no static property → 0 · `git diff --stat 82e7904..HEAD` (steps 8–13:
+31 files, 3206 insertions, 0 deletions) touches none of `deptrac.yaml`, `phpunit.xml`,
+`phpstan.neon`, `composer.json`, `.php-cs-fixer.dist.php`, `CLAUDE.md`, `Dockerfile`,
+`.claude/**`.
+
+## Left for the tester / reviewer
+
+- **`Allowed 0` is expected, not a failure** (deviation 6). If AC-4 is to stay machine-checked,
+  the checkable property is the analysed-file count (1 before step 2, 78 after step 13) or the
+  absence of an `Engine -> Shared` entry, not the `Allowed` figure. The step-13 probe is the
+  positive evidence that the gate bites: a Symfony import in `src/Engine` produced
+  `Violations 1` **and** a `BoundedContextLayoutTest` failure.
+- **Steps 14–16 are not implemented**: `DeterminismTest` + `EnginePurityTest` (step 14), the
+  `Rng` contract and `SeededRng` (step 15), and `docs/engine/ast.md` (step 16). The AST spec
+  must document the `visited` operator in terms of choice conditions and `next` guards, not
+  `on_enter` — see deviation 10.
+- The 100 % figure is read from `--coverage-text`, not enforced by a flag; `#[CoversClass]` is
+  present on every Engine test class, so it means "reached by a test that declares it covers
+  that class". The `EngineEvent` and `StoryGraph` interfaces have no executable lines and are
+  not listed in any `#[CoversClass]`.
+- `tests/Unit/Engine/Double/InMemoryStoryGraph.php` is exercised by `TransitionTest` only; it
+  is deliberately under `tests/` (AC-10) and therefore outside the coverage filter.
