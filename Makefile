@@ -1,7 +1,7 @@
 DC   := docker compose
 EXEC := $(DC) exec -T php
 
-.PHONY: build up down sh test qa guard-running
+.PHONY: build up down sh test qa coverage guard-running
 
 build:
 	HOST_UID=$$(id -u) HOST_GID=$$(id -g) $(DC) build
@@ -21,6 +21,9 @@ test: guard-running
 
 qa: guard-running
 	$(EXEC) composer qa
+
+coverage: guard-running
+	$(EXEC) composer coverage
 
 guard-running:
 	@$(DC) ps --status running --services | grep -qx php \

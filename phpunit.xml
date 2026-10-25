@@ -18,6 +18,8 @@
         </testsuite>
     </testsuites>
 
+    <coverage ignoreDeprecatedCodeUnits="true" disableCodeCoverageIgnore="true"/>
+
     <source>
         <include>
             <directory>src</directory>

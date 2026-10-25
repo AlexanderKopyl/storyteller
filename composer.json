@@ -61,6 +61,7 @@
         "cs-fix": "vendor/bin/php-cs-fixer fix",
         "deptrac": "vendor/bin/deptrac analyse --config-file=deptrac.yaml --report-uncovered --fail-on-uncovered",
         "cs-check": "vendor/bin/php-cs-fixer fix --dry-run --diff",
+        "coverage": "vendor/bin/phpunit --testsuite=unit --coverage-filter src/Engine --coverage-text --coverage-clover var/coverage/clover.xml --coverage-html var/coverage/html",
         "qa": [
             "@cs-check",
             "@phpstan",
@@ -74,6 +75,7 @@
         "cs-fix": "Apply PSR-12 formatting with php-cs-fixer",
         "deptrac": "Check the bounded-context dependency rule; an unlayered dependency fails too",
         "cs-check": "Verify PSR-12 formatting without writing files",
+        "coverage": "Run the unit suite with line coverage scoped to src/Engine",
         "qa": "Run all four quality gates in order: cs-check, phpstan, deptrac, test"
     },
     "config": {
