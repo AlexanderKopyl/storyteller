@@ -168,6 +168,156 @@ final class EffectApplierTest extends TestCase
         self::assertSame(['rope' => ['from' => 2, 'to' => 0]], $result->diff->inventory);
     }
 
+    /**
+     * The three points around the inventory floor, in one place: one short of
+     * the stock, exactly the stock, and one more than the stock.
+     *
+     * The third row is D-DIFF's rule made visible — the diff records
+     * *outcomes*, not attempts, so a `remove_item` that had nothing to take
+     * produces no entry at all and therefore no `EffectsApplied` event. A
+     * quantity is never negative and a zero entry is never persisted.
+     *
+     * @param array<string, int> $expectedInventory
+     * @param array<string, array{from: int, to: int}> $expectedDiff
+     */
+    #[DataProvider('removeItemBoundaryProvider')]
+    public function testRemoveItemIsClampedAtZero(
+        int $held,
+        int $removed,
+        array $expectedInventory,
+        array $expectedDiff,
+    ): void {
+        $result = $this->applier()->apply(
+            $this->effects([['op' => 'remove_item', 'item' => 'rope', 'qty' => $removed]]),
+            GameState::create([], [], $held > 0 ? ['rope' => $held] : [], [], []),
+        );
+
+        self::assertSame($expectedInventory, $result->state->toArray()['inventory']);
+        self::assertSame($expectedDiff, $result->diff->inventory);
+        self::assertGreaterThanOrEqual(0, $result->state->itemQty('rope'));
+    }
+
+    /**
+     * @return iterable<string, array{0: int, 1: int, 2: array<string, int>, 3: array<string, array{from: int, to: int}>}>
+     */
+    public static function removeItemBoundaryProvider(): iterable
+    {
+        yield 'one short of the stock' => [3, 2, ['rope' => 1], ['rope' => ['from' => 3, 'to' => 1]]];
+        yield 'exactly the stock' => [3, 3, [], ['rope' => ['from' => 3, 'to' => 0]]];
+        yield 'one more than the stock' => [3, 4, [], ['rope' => ['from' => 3, 'to' => 0]]];
+        yield 'far more than the stock' => [1, 1000, [], ['rope' => ['from' => 1, 'to' => 0]]];
+        yield 'nothing held at all' => [0, 1, [], []];
+        yield 'nothing held, large quantity' => [0, 1000, [], []];
+    }
+
+    /**
+     * `sub` is unsigned-free on purpose: the Engine has no notion of a floor
+     * for a variable, only of its declared type, so a story that subtracts 200
+     * from 95 gets -105 and may branch on it. Clamping would be hidden policy
+     * — the author who wants a floor writes the `next` guard.
+     *
+     * Pinned in both directions and for both numeric types, and asserted
+     * through `toArray()` so a silently clamped 0 could not pass.
+     */
+    public function testSubMayDriveAVariableNegativeAndNothingClampsIt(): void
+    {
+        $applier = $this->applier();
+
+        $int = $applier->apply(
+            $this->effects([['op' => 'sub', 'var' => 'hp', 'value' => 200]]),
+            $this->state(),
+        );
+        $float = $applier->apply(
+            $this->effects([['op' => 'sub', 'var' => 'ratio', 'value' => 2.5]]),
+            $this->state(),
+        );
+        $back = $applier->apply(
+            $this->effects([['op' => 'add', 'var' => 'hp', 'value' => 300]]),
+            $int->state,
+        );
+
+        self::assertSame(['hp' => -105], $int->state->toArray()['vars']);
+        self::assertSame(['vars' => ['hp' => ['from' => 95, 'to' => -105]]], $int->diff->toArray());
+
+        // The float default is 1.0, so this one starts from the declaration.
+        self::assertSame(-1.5, $float->state->var('ratio'));
+
+        self::assertSame(195, $back->state->var('hp'));
+    }
+
+    /**
+     * A no-op arithmetic step is a no-op in the log too: the diff is computed
+     * from the before/after states, so `add 0` and `set` to the value already
+     * held record nothing and emit no event.
+     */
+    public function testAnArithmeticStepOfZeroAndASetToTheCurrentValueProduceNoDiff(): void
+    {
+        $applier = $this->applier();
+
+        foreach ([
+            ['op' => 'add', 'var' => 'hp', 'value' => 0],
+            ['op' => 'sub', 'var' => 'hp', 'value' => 0],
+            ['op' => 'set', 'var' => 'hp', 'value' => 95],
+        ] as $node) {
+            $result = $applier->apply($this->effects([$node]), $this->state());
+
+            self::assertTrue($result->diff->isEmpty(), json_encode($node, JSON_THROW_ON_ERROR));
+            self::assertSame($this->state()->toArray(), $result->state->toArray());
+        }
+    }
+
+    /**
+     * Variable, flag and item keys are author-supplied strings and the Engine
+     * puts no character class on them. Two are worth pinning because they are
+     * where a naive `ksort` or a `!$key` test would break: a multi-byte key
+     * and the empty string.
+     *
+     * `SORT_STRING` is a byte comparison, so the canonical order is the UTF-8
+     * byte order — '' first, ASCII before any multi-byte sequence — and it is
+     * the same order in every locale, which is the property the ordering
+     * exists for.
+     */
+    public function testVariableFlagAndItemKeysMayBeUnicodeOrEmpty(): void
+    {
+        $applier = new EffectApplier(VariableSchema::of([
+            new VariableDefinition('', VariableType::Int, 0),
+            new VariableDefinition('здоровье', VariableType::Int, 10),
+            new VariableDefinition('体力', VariableType::Int, 20),
+        ]));
+
+        $result = $applier->apply(
+            $this->effects([
+                ['op' => 'add', 'var' => 'здоровье', 'value' => 5],
+                ['op' => 'set', 'var' => '', 'value' => 7],
+                ['op' => 'sub', 'var' => '体力', 'value' => 1],
+                ['op' => 'set_flag', 'flag' => ''],
+                ['op' => 'set_flag', 'flag' => 'прошёл_зал'],
+                ['op' => 'give_item', 'item' => '', 'qty' => 2],
+                ['op' => 'give_item', 'item' => 'верёвка', 'qty' => 3],
+            ]),
+            GameState::initial(),
+        );
+
+        $array = $result->state->toArray();
+
+        self::assertSame(['' => 7, 'здоровье' => 15, '体力' => 19], $array['vars']);
+        self::assertSame(['', 'прошёл_зал'], $array['flags']);
+        self::assertSame(['' => 2, 'верёвка' => 3], $array['inventory']);
+
+        // The diff keys the same strings back, and the whole state survives
+        // the JSONB round trip byte for byte.
+        self::assertSame(
+            ['' => ['from' => 0, 'to' => 7], 'здоровье' => ['from' => 10, 'to' => 15], '体力' => ['from' => 20, 'to' => 19]],
+            $result->diff->vars,
+        );
+
+        $json = json_encode($array, JSON_THROW_ON_ERROR);
+        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertIsArray($decoded);
+        self::assertSame($array, GameState::fromArray($decoded)->toArray());
+    }
+
     public function testGiveItemAndRemoveItemDefaultToAQuantityOfOne(): void
     {
         $applier = $this->applier();
