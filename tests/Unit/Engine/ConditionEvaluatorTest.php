@@ -143,6 +143,42 @@ final class ConditionEvaluatorTest extends TestCase
         self::assertTrue($evaluator->evaluate(Condition::fromArray(['op' => 'eq', 'var' => 'ratio', 'value' => 0.1 + 0.2]), $state));
     }
 
+    /**
+     * **r2, as an author would meet it.** `ratio` is declared `float`, so both
+     * the stored value and the literal are widened before the `===`. Above
+     * 2^53 the widening is not injective, and the evaluator therefore reports
+     * that a variable holding 9007199254740993 equals 9007199254740992 — two
+     * literals an author wrote as different numbers.
+     *
+     * `hp` is declared `int`, is never widened, and stays exact at the same
+     * magnitude. That contrast is the whole content of the limit: it belongs
+     * to the `float` declaration, not to the Engine's comparison.
+     */
+    public function testAFloatDeclaredVariableCannotTellTwoIntegersAbove2Pow53Apart(): void
+    {
+        $evaluator = $this->evaluator();
+        $state = GameState::create(['ratio' => 9007199254740993, 'hp' => 9007199254740993], [], [], [], []);
+
+        self::assertTrue($evaluator->evaluate(
+            Condition::fromArray(['op' => 'eq', 'var' => 'ratio', 'value' => 9007199254740993]),
+            $state,
+        ));
+        self::assertTrue($evaluator->evaluate(
+            Condition::fromArray(['op' => 'eq', 'var' => 'ratio', 'value' => 9007199254740992]),
+            $state,
+        ));
+
+        // The int declaration keeps them apart.
+        self::assertTrue($evaluator->evaluate(
+            Condition::fromArray(['op' => 'eq', 'var' => 'hp', 'value' => 9007199254740993]),
+            $state,
+        ));
+        self::assertFalse($evaluator->evaluate(
+            Condition::fromArray(['op' => 'eq', 'var' => 'hp', 'value' => 9007199254740992]),
+            $state,
+        ));
+    }
+
     public function testUnknownVariableThrows(): void
     {
         $this->expectException(UnknownVariableException::class);

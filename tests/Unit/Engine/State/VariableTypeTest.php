@@ -64,6 +64,43 @@ final class VariableTypeTest extends TestCase
     }
 
     /**
+     * **r2 — the class docblock's "widening loses nothing" is false above
+     * 2^53, and this is where the limit becomes discoverable.**
+     *
+     * A `float` holds 53 bits of mantissa, so `9007199254740993` — the first
+     * odd integer past the boundary — is not representable and widening
+     * silently returns its even neighbour. `accepts()` says yes, so nothing
+     * throws; the author's number is simply changed. The limit is a property
+     * of IEEE-754 and of JSON, not of this code, which is why the honest fix
+     * is to correct the docblock rather than the behaviour — but the limit
+     * must be written down somewhere that fails if it ever moves.
+     *
+     * An `int`-declared variable is unaffected: nothing is ever narrowed, so
+     * the same literal stays exact.
+     */
+    public function testWideningAnIntIntoAFloatDeclarationIsLossyAbove2Pow53(): void
+    {
+        $float = VariableType::Float;
+
+        self::assertSame(9007199254740992, 2 ** 53);
+
+        // At the boundary, widening is exact in both directions.
+        self::assertTrue($float->accepts(9007199254740992));
+        self::assertSame(9007199254740992.0, $float->canonicalise(9007199254740992));
+        self::assertSame(9007199254740992, (int) $float->canonicalise(9007199254740992));
+
+        // One above it, the value is accepted and then quietly changed.
+        self::assertTrue($float->accepts(9007199254740993));
+        self::assertSame(9007199254740992.0, $float->canonicalise(9007199254740993));
+        self::assertNotSame(9007199254740993, (int) $float->canonicalise(9007199254740993));
+
+        // The asymmetry's other half is exact at any magnitude: an int
+        // declaration never narrows, so it never loses a digit.
+        self::assertSame(9007199254740993, VariableType::Int->canonicalise(9007199254740993));
+        self::assertSame(PHP_INT_MAX, VariableType::Int->canonicalise(PHP_INT_MAX));
+    }
+
+    /**
      * @return iterable<string, array{0: VariableType, 1: int|float|string|bool, 2: bool}>
      */
     public static function acceptanceGridProvider(): iterable
@@ -101,6 +138,18 @@ final class VariableTypeTest extends TestCase
         yield 'int declaration never narrows a float' => [VariableType::Int, 1.0, 1.0];
         yield 'string declaration leaves a string alone' => [VariableType::String, '1', '1'];
         yield 'bool declaration leaves a bool alone' => [VariableType::Bool, true, true];
+
+        // r2: widening is exact at 2^53 and lossy one above it.
+        yield 'float declaration widens 2^53 exactly' => [
+            VariableType::Float,
+            9007199254740992,
+            9007199254740992.0,
+        ];
+        yield 'float declaration rounds 2^53 + 1 to its even neighbour' => [
+            VariableType::Float,
+            9007199254740993,
+            9007199254740992.0,
+        ];
     }
 
     /**
