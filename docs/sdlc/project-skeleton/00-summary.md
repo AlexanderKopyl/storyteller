@@ -39,14 +39,15 @@ re-verified independently by the orchestrator.
 
 | Command | Result |
 |---------|--------|
-| `composer test` | exit **0** — `OK (6 tests, 44 assertions)` |
-| `composer phpstan` | exit **0** — `[OK] No errors`, 7 files, level 8 |
+| `composer test` | exit **0** — `OK (24 tests, 2020 assertions)` |
+| `composer phpstan` | exit **0** — `[OK] No errors`, level 8 |
 | `composer deptrac` | exit **0** — Violations 0 / Uncovered 0 / Allowed 0 |
-| `composer cs-fix` | exit **0** via `cs-check` — 0 of 8 files would change |
+| `composer cs-fix` | exit **0** via `cs-check` — 0 of 10 files would change |
 | `make qa` | exit **0** — the acceptance criterion |
 
-Tests added: **6** (unit: 6, functional: 0) across two files — a kernel-boot smoke test and
-`tests/Unit/Shared/BoundedContextLayoutTest.php`.
+Tests added: **24** (unit: 24, functional: 0) across four files — a kernel-boot smoke test,
+`tests/Unit/Shared/BoundedContextLayoutTest.php`, and the two guard tests added when N1 and M3
+were closed after Gate D: `DevPackageIsolationTest.php` and `UnlayeredSourceTest.php`.
 
 **Proven non-vacuous.** The architecture test was demonstrated red-first by the tester and
 again by the orchestrator: planting `use function Symfony\Component\String\u;` in `src/Engine`
@@ -56,7 +57,11 @@ Engine→Routing **1**, Engine→Doctrine **1**, Shared→Uid **1**, Api→Engin
 **0 with `Allowed 2`** (positive control), Engine→`Random\Randomizer`/`DateTimeImmutable`/`BcMath\Number` **0**.
 
 **Gate vacancy, stated plainly.** On an empty tree `deptrac` reports `Allowed 0` — no layered
-token exists yet — so it is vacuous in *coverage* while proven in *mechanism*. `phpstan` is
+token exists yet — so it is vacuous in *coverage* while proven in *mechanism*. That remains true
+after the N1/M3 closures: the two new layers are deny-only, so on an empty tree they can only ever
+report zero. What changed is that `test` grew teeth — `DevPackageIsolationTest` asserts against
+`composer.lock` and the generated autoload maps, so it has real input to fail on today, and did.
+`phpstan` is
 genuinely ceremonial: 7 files, one of them generated vendor output, and its extensions are inert
 without `containerXmlPath`. `cs-check` and `test` are protective today. One of four is ceremonial.
 
@@ -64,15 +69,66 @@ without `containerXmlPath`. `cs-check` and `test` are protective today. One of f
 
 | Severity | Finding | Why deferred |
 |----------|---------|--------------|
-| major | **N1** — `require-dev` packages fall inside the `Framework` layer, so a production class may `use PHPUnit\Framework\Assert` with every gate green. Fatal under `composer install --no-dev`. Verified by probe: `Allowed 1`, exit 0. | Found by the Gate C re-review *after* the fix loop closed. Fixing it edits the dependency graph, which is implementer work under the capability floor, and Gate C had already consumed fix loop 1 of 2. Fix is known: a `Dev` layer over the six dev packages, granted to nobody, plus a matching `must_not` in `Framework`. |
+| ~~major~~ **CLOSED** | **N1** — `require-dev` packages fell inside the `Framework` layer, so a production class could `use PHPUnit\Framework\Assert` with every gate green and fatal under `composer install --no-dev`. | **Closed after Gate D in `ff3afca`.** See "Post-Gate-D closures" below — the prescribed fix did not work and was replaced. |
 | major | **M1** — `migrations/` sits outside phpstan, cs-fixer and deptrac. | No migration exists yet. Closing it means deciding how generated migration code is held to level 8, which is a decision for the first migration. |
 | major | **M2** — PHPStan's input set depends on whether a kernel has booted, because it analyses the generated, gitignored `config/reference.php`. | Cosmetic while the tree is empty; interacts with C-2's untracking decision and deserves its own change. |
-| major | **M3** — a class in an unlayered namespace escapes the dependency rule entirely. Verified: `Storyteller\Support` importing Doctrine *and* Symfony is reported **nowhere** — not a violation, not `Uncovered`. | Structural: deptrac only evaluates dependencies whose *depender* is layered, so `--fail-on-uncovered` cannot reach it. Needs a deliberate choice (catch-all layer, or a test asserting `src/` has no unlayered top-level dirs). |
+| ~~major~~ **CLOSED** | **M3** — a class in an unlayered namespace escaped the dependency rule entirely. `Storyteller\Support` importing Doctrine *and* Symfony was reported **nowhere** — not a violation, not `Uncovered`. | **Closed after Gate D in `4badf1c`** by a catch-all `Unlayered` layer. See below; the layer-free *zone* still exists, only the escape from the rule is gone. |
 | major | **M4** — commit `9bcc496` changed `.claude/**` mid-feature and is recorded in no phase document. | Process finding, not a code defect. Recorded here, which is the remedy. |
 | minor | **N2** — deptrac cannot see vendor *functions*; confirmed a tool limitation, not a config error. | **Mitigated** test-side in `b4ba08d`: the scan now covers `use function` / `use const` across Symfony, Doctrine, Psr, Monolog and PHPUnit roots. |
 | minor | **N3** — the built-ins exemption is pinned to `jetbrains/phpstorm-stubs`; a built-in the map misses becomes a hard violation in Engine/Shared. | 33 built-ins probed against the locked v2026.2 map, all present, including `Random\Randomizer` and `BcMath\Number`. Recorded for diagnosis speed only. |
 | minor | **N4, m1** — doc inaccuracies: a token in two layers is a *violation*, not a warning; the `analyser.types` comment is incomplete; batch 4's notes say `guard-running` exits 2 when it exits 1. | Documentation drift, no behavioural effect. |
 | minor | **m2–m10** | Carried from `04-review.md` unchanged. |
+
+## Post-Gate-D closures: N1 and M3
+
+Both were closed after the pipeline finished, on `implementer` at `opus` (capability floor:
+both edit `deptrac.yaml`). Commits `ff3afca`, `4badf1c`, `e83c056`.
+
+**N1 — the fix the review prescribed does not work.** The review called for a `Dev` layer built
+from a `composer` collector over the six `require-dev` packages. Deptrac 4.7.2's `composer`
+collector resolves a package only through its `autoload.psr-0` / `psr-4` keys. Confirmed against
+`composer.lock`: `phpunit/phpunit` declares `classmap` + `files`, `phpstan/phpstan` is `files`-only,
+and every `sebastian/*` is `classmap`. That collector would have resolved **zero** namespaces for
+exactly the packages N1 is about — the prescribed fix would have shipped green and caught nothing.
+Implemented with `classLike` namespace-prefix collectors instead, over the **full transitive
+dev-only closure** (all 51 `packages-dev` entries → 20 prefixes), not the six direct packages.
+`Framework` gained `must_not: {type: layer, value: Dev}` so the two cannot drift apart.
+
+The scope decision is load-bearing and was verified both ways: a probe in `src/Api/Dto` importing
+`SebastianBergmann\Diff\Differ` — a *transitive* dev symbol — is **allowed** under a six-package
+layer and a **violation** under the closure.
+
+`tests/Unit/Shared/DevPackageIsolationTest.php` pins the prefix list by recomputing the dev-only
+namespace set from `composer.lock` plus the generated autoload maps, failing three ways: a dev
+namespace missed, a **production** namespace captured, or a dead prefix. It earned itself on the
+first run — `^Symfony\Polyfill\Php8` also matched `symfony/polyfill-php86`, a *production* package,
+which would have turned legitimate polyfill use into a false violation. Dev carries `php80`/`php81`;
+production carries `php83`–`php86`. Narrowed to `^Symfony\Polyfill\Php8[01]\`.
+
+**M3 — closed with a catch-all `Unlayered` layer** (`src/.*` minus the five contexts minus
+`src/Kernel\.php$`), granted nothing and granted to nobody, pinned by
+`tests/Unit/Shared/UnlayeredSourceTest.php`. A directory-name test was rejected: it would hold the
+layout but leave any file it allowed unconstrained, and would duplicate the context list.
+
+Verified by the orchestrator in the container (PHP 8.5.12), not taken from the agent's report:
+three probes planted in one run → **4 violations, exit 1**, each naming the right file and the
+right layer (`Dev` for both N1 probes, `Framework` for the `Storyteller\Support` probe). Probes
+replaced with allowed dependencies → `Violations 0 / Allowed 3`, exit 0, with the Engine's
+`DateTimeImmutable` / `Random\Randomizer` / `BcMath\Number` producing no entry at all. Probes
+removed → `make qa` exit 0, tree clean.
+
+**Not covered, stated plainly** — all four are written into `deptrac.yaml` as well:
+
+- Vendor **functions and constants** stay invisible to deptrac (N2 unchanged). `use function
+  PhpCsFixer\…;` in `src/` is still not a violation; the `BoundedContextLayoutTest` scan is what
+  covers that, and only for Engine and Shared.
+- An unlayered class that **depends on nothing** stays silent. Deptrac reports dependencies, not
+  file existence.
+- The layer-free **zone** still exists. `"Storyteller\\": "src/"` is still in `composer.json`; the
+  narrow cure is to drop it and classmap `src/Kernel.php`. Left open deliberately.
+- `Dev` is a prefix list, so it is **not** exhaustive by construction the way `Framework` is. It can
+  go stale — but staleness is loud, not silent, because the guard test recomputes it.
+- `migrations/` is still outside `paths` (M1), so a migration importing PHPUnit is not covered.
 
 ## Model routing
 
@@ -94,6 +150,9 @@ Implement, batch by batch:
 | 4 | 10–12 | `opus` | Docker, Makefile and the container toolchain; crosses the host/container boundary where the acceptance criterion lives. |
 | 5 | 13–14 | `sonnet` | README and the `CLAUDE.md` line-3 edit; docs-only, every fact already established. |
 
+Post-Gate-D: **`implementer` on `opus`** for the N1/M3 closures — capability floor, both steps edit
+`deptrac.yaml` and the dependency graph. Not a gate fix loop; the pipeline had already closed.
+
 Escalations (fix loops): **Gate C loop 1 — `opus`** for both the implementer and the re-review.
 Per the escalation rule a fix loop never reuses the tier that produced the blocker, and both
 agents were already at the ceiling, so the loop was run at `opus` with the explicit instruction
@@ -106,17 +165,20 @@ cross-context interfaces or security, because none of those exist yet.
 
 ## Open items
 
-- **N1 is the one to schedule first.** It is the only open finding that can produce a green
-  build which dies in production. Fix it before real code lands on top of the contract.
-- **M3 next.** `"Storyteller\\": "src/"` leaves a one-file route to unconstrained code; the
-  longer the tree stays empty, the cheaper the decision is.
-- M1 and M2 attach naturally to the first migration and the first real PHPStan surface.
-- `.env` is tracked alongside `.env.example`. The reviewer judged the tracked file clean —
-  placeholder `APP_SECRET`, dev-only credentials, Postgres bound to `127.0.0.1` since C-3 — and
-  the `.env`/`.env.local` split correct. **Raised with the user, not yet answered.** Before real
-  secrets exist in this tree, move them out of it rather than relying on deny patterns.
-- `.claude/skills/sdlc/SKILL.md` line 102 still reads "PHP 8.3 / Symfony 7". Out of scope by
-  decision D2; needs separate approval.
+- **N1 and M3 are closed** (see above). Both guards are proven red-first, not merely green.
+- **M1 and M2 remain open by design.** They attach naturally to the first migration and the first
+  real PHPStan surface; closing them now would be deciding in the abstract how generated migration
+  code is held to level 8.
+- **One deliberate loose end:** `"Storyteller\\": "src/"` stays in `composer.json`. The `Unlayered`
+  layer means code there can no longer import anything, but the zone itself still exists. Removing
+  it is a `composer.json` change worth making on its own.
+- `.env` is tracked alongside `.env.example`. **Closed as correct:** `.gitignore` carries
+  `/.env.local`, `/.env.local.php` and `/.env.*.local`, which is Symfony's intended split —
+  committed defaults in `.env`, real secrets in the ignored `.env.local`. The reviewer's read was
+  right. The standing advice is unchanged: when real secrets exist, keep them out of the tree
+  rather than behind deny patterns.
+- `.claude/skills/sdlc/SKILL.md` **fixed in `e59e00f`** — it justified the `fable` exclusion against
+  "PHP 8.3 / Symfony 7", a stack this project never used. Now 8.5 / 7.4 LTS, matching CLAUDE.md.
 - Five security reviews fired on `.claude/settings.json` during this feature. All were
   acknowledged, none applied: the permission breadth and `defaultMode: dontAsk` were requested
   by the user with the tradeoffs surfaced first. The deny rules are speed bumps, not a boundary —
@@ -134,6 +196,11 @@ feat(skeleton): Symfony 7.4 / PHP 8.5 foundation with enforced context rules
   package, not a list that goes stale when one is added
 - unit test scans src/Engine and src/Shared for framework imports,
   including `use function`, which deptrac structurally cannot see
+- a Dev layer denies all 51 require-dev packages transitively, so a
+  production class cannot import PHPUnit and pass; a guard test
+  recomputes the list from composer.lock and fails if it drifts
+- an Unlayered layer closes the gap where a class outside the five
+  contexts was reported nowhere at all, not even as uncovered
 - php-fpm 8.5 / nginx / postgres 16 compose stack; `make qa` is the gate
 - pins 13 transitive packages to keep Symfony 8.1 out of a 7.4 LTS tree
 
