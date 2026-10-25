@@ -21,8 +21,9 @@ use Random\Randomizer;
  * irrelevant at the rate a story rolls dice and buys a property worth far
  * more: the same `(seed, turn, index)` yields the same value in a different
  * process, on a different machine, a year later. Nothing here reads a clock, a
- * PID or the OS entropy pool — `Random\Engine\Secure` in particular is never
- * used, because it is exactly the one engine that cannot be reproduced.
+ * PID or the OS entropy pool. PHP's CSPRNG-backed random engine in particular
+ * is never used here, because it is precisely the one that cannot be
+ * reproduced.
  *
  * **Unused by design.** No condition, effect or service in this feature takes
  * an `Rng`; see the interface docblock, and `SeededRngTest` asserts the claim.
