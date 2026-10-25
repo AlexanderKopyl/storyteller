@@ -510,6 +510,49 @@ final class TransitionTest extends TestCase
         $this->transition($story)->run($second->state, 'x', 'third', 3);
     }
 
+    /**
+     * Scene and choice keys are authored identifiers and the Engine puts no
+     * character class on them, so a story written in Japanese or Russian
+     * addresses its graph in Japanese or Russian. Pinned end to end — lookup,
+     * `next` resolution, visit, history and the event payloads — because the
+     * keys travel into JSONB and back out again.
+     */
+    public function testSceneAndChoiceKeysMayBeUnicode(): void
+    {
+        $result = $this->transition([
+            [
+                'key' => '交差点',
+                'choices' => [['key' => '北へ', 'effects' => [['op' => 'set_flag', 'flag' => 'пошёл']]]],
+                'next' => [['scene' => '洞窟', 'if' => ['op' => 'flag', 'flag' => 'пошёл']]],
+            ],
+            ['key' => '洞窟'],
+        ])->run($this->state(), '交差点', '北へ', 1);
+
+        self::assertSame('洞窟', $result->sceneKey);
+        self::assertSame(['洞窟' => 1], $result->state->toArray()['visited']);
+        self::assertSame(['洞窟'], $result->state->toArray()['history']);
+        self::assertSame(
+            ['event' => 'choice_made', 'scene' => '交差点', 'choice' => '北へ', 'turn' => 1],
+            $result->toArray()['events'][0],
+        );
+
+        $json = json_encode($result->toArray(), JSON_THROW_ON_ERROR);
+
+        // `json_encode` escapes every non-ASCII byte by default, so the whole
+        // payload is printable ASCII and survives any transport.
+        self::assertMatchesRegularExpression('/^[\x20-\x7e]+$/', $json);
+        self::assertSame($result->toArray(), json_decode($json, true, 512, JSON_THROW_ON_ERROR));
+        self::assertSame(
+            $result->state->toArray(),
+            GameState::fromArray(json_decode(
+                json_encode($result->state->toArray(), JSON_THROW_ON_ERROR),
+                true,
+                512,
+                JSON_THROW_ON_ERROR,
+            ))->toArray(),
+        );
+    }
+
     public function testIsEndingIsTrueExactlyWhenTheGraphSaysSo(): void
     {
         $story = [

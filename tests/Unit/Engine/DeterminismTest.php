@@ -296,6 +296,73 @@ final class DeterminismTest extends TestCase
     }
 
     /**
+     * **The canonical order is a byte order, not a collation order.**
+     *
+     * `ksort($map, SORT_STRING)` and `sort($flags, SORT_STRING)` were chosen
+     * over the defaults precisely so that the persisted bytes cannot depend on
+     * the process's locale — but `SORT_STRING` and `SORT_LOCALE_STRING` differ
+     * by one constant and agree in the `C` locale, so a slip would be
+     * invisible to every other test in the suite and would corrupt only the
+     * machines whose locale happens to collate.
+     *
+     * Two independent assertions, so neither needs a particular locale to be
+     * installed to stay honest:
+     *
+     *  - the key order equals a literal byte order — `Z` before `a`,
+     *    `chmel` before `cukr`, the multi-byte keys last. Under Czech
+     *    collation `chmel` sorts after `d` and `Z` sorts last, so a collated
+     *    ordering fails this even in the `C` locale;
+     *  - the encoded state is byte-identical under every locale this machine
+     *    can actually set.
+     */
+    public function testCanonicalOrderingIsByteOrderAndIsTheSameInEveryLocale(): void
+    {
+        $original = setlocale(LC_COLLATE, '0');
+
+        try {
+            $encodings = [];
+
+            foreach (['C', 'cs_CZ.UTF-8', 'tr_TR.UTF-8', 'en_US.UTF-8', 'de_DE.UTF-8'] as $locale) {
+                if (setlocale(LC_COLLATE, $locale) === false) {
+                    continue;
+                }
+
+                $state = GameState::create(
+                    ['cukr' => 1, 'chmel' => 2, 'Z' => 3, 'a' => 4, 'd' => 5, 'ä' => 6, '体力' => 7],
+                    ['cukr', 'chmel', 'Z', 'a', 'd', 'ä', '体力'],
+                    ['cukr' => 1, 'chmel' => 1, 'Z' => 1, 'a' => 1, 'd' => 1],
+                    [],
+                    [],
+                );
+
+                self::assertSame(
+                    ['Z', 'a', 'chmel', 'cukr', 'd', 'ä', '体力'],
+                    array_keys($state->toArray()['vars']),
+                    sprintf('The variable order changed under the %s locale.', $locale),
+                );
+                self::assertSame(
+                    ['Z', 'a', 'chmel', 'cukr', 'd', 'ä', '体力'],
+                    $state->toArray()['flags'],
+                    sprintf('The flag order changed under the %s locale.', $locale),
+                );
+                self::assertSame(
+                    ['Z', 'a', 'chmel', 'cukr', 'd'],
+                    array_keys($state->toArray()['inventory']),
+                    sprintf('The inventory order changed under the %s locale.', $locale),
+                );
+
+                $encodings[$locale] = json_encode($state->toArray(), JSON_THROW_ON_ERROR);
+            }
+
+            // Non-vacuous: `C` is always settable, so at least one pass ran.
+            self::assertArrayHasKey('C', $encodings);
+            self::assertCount(1, array_unique(array_values($encodings)));
+        } finally {
+            setlocale(LC_COLLATE, $original === false ? 'C' : $original);
+        }
+    }
+
+    /**
      * @param  list<array<array-key, mixed>> $scenes
      * @param  list<string>                  $endings
      */
