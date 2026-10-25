@@ -11,6 +11,7 @@ use Storyteller\Engine\Event\EndingReached;
 use Storyteller\Engine\Event\EngineEvent;
 use Storyteller\Engine\Event\SceneEntered;
 use Storyteller\Engine\Exception\ChoiceUnavailableException;
+use Storyteller\Engine\Exception\EngineException;
 use Storyteller\Engine\Exception\NoNextSceneException;
 use Storyteller\Engine\Exception\RedirectLoopException;
 use Storyteller\Engine\Exception\UnknownSceneException;
@@ -69,15 +70,24 @@ final readonly class Transition
 
         $scene = $this->graph->scene($currentScene);
         $choice = $scene->choice($choiceKey);
+        $condition = $choice->condition;
 
-        if ($choice->condition !== null && !$this->evaluator->evaluate($choice->condition, $state)) {
+        $here = ['scene' => $currentScene, 'choice' => $choiceKey];
+
+        if ($condition !== null && !self::inContext(
+            [...$here, 'phase' => 'choice_condition', 'turn' => $turn],
+            fn (): bool => $this->evaluator->evaluate($condition, $state),
+        )) {
             throw ChoiceUnavailableException::conditionFailed($currentScene, $choiceKey);
         }
 
         /** @var list<EngineEvent> $events */
         $events = [new ChoiceMade($currentScene, $choiceKey, $turn)];
 
-        $chosen = $this->applier->apply($choice->effects, $state);
+        $chosen = self::inContext(
+            [...$here, 'phase' => EffectPhase::Choice->value, 'turn' => $turn],
+            fn (): EffectResult => $this->applier->apply($choice->effects, $state),
+        );
         $state = $chosen->state;
 
         if (!$chosen->diff->isEmpty()) {
@@ -91,7 +101,10 @@ final readonly class Transition
             $redirects = 1;
             self::guardRedirects($redirects, $target);
         } else {
-            $target = $this->resolver->resolve($scene->next, $state, $currentScene);
+            $target = self::inContext(
+                [...$here, 'phase' => 'next', 'turn' => $turn],
+                fn (): string => $this->resolver->resolve($scene->next, $state, $currentScene),
+            );
             $redirects = 0;
         }
 
@@ -159,7 +172,13 @@ final readonly class Transition
         self::requireScene($graph, $target);
 
         while (true) {
-            $entered = $applier->apply($graph->scene($target)->onEnter, $state);
+            // No `choice` key: an entry has no choice to name, and a turn's
+            // choice is not where an `on_enter` node is broken. The Engine
+            // does not invent context it does not have (review M4).
+            $entered = self::inContext(
+                ['scene' => $target, 'phase' => EffectPhase::OnEnter->value, 'turn' => $turn],
+                fn (): EffectResult => $applier->apply($graph->scene($target)->onEnter, $state),
+            );
             $state = $entered->state;
 
             if (!$entered->diff->isEmpty()) {
@@ -189,6 +208,29 @@ final readonly class Transition
         }
 
         return new TransitionResult($state, $target, $isEnding, $events);
+    }
+
+    /**
+     * Runs one phase of a turn and, if it fails, says where it was.
+     *
+     * The evaluator and the applier know a variable name and nothing else; a
+     * turn knows the scene, the choice, the phase and the turn number. This is
+     * the one place the second is attached to the first. The exception type is
+     * unchanged, so every `catch` keeps catching what it caught — only the
+     * message and the structured context grow (review M4).
+     *
+     * @template T
+     * @param  array<string, string|int> $context
+     * @param  callable(): T             $phase
+     * @return T
+     */
+    private static function inContext(array $context, callable $phase): mixed
+    {
+        try {
+            return $phase();
+        } catch (EngineException $failure) {
+            throw $failure->withContext($context);
+        }
     }
 
     /**

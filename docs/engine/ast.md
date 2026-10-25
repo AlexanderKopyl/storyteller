@@ -637,6 +637,38 @@ concrete classes, all under `src/Engine/Exception/`:
 | `NoNextSceneException` | A scene's `next` rule list (including an empty one) ran out with no rule matching and no unconditional fallback present. |
 | `RedirectLoopException` | A single `Transition::run()` spent more than `Transition::MAX_REDIRECTS` (5) redirects. Carries the limit and the last scene reached. |
 
+### Where an evaluation-time error happened
+
+Parse-time errors carry a breadcrumb into the authored document
+(`condition.of[1].if`). Evaluation-time errors cannot: the evaluator knows a
+variable name and nothing else. `Transition` does know, so every phase of a
+turn annotates a failure that escapes it, and the message gains a suffix:
+
+```
+Unknown variable "mana". (scene "cave", phase "on_enter", turn 9)
+Variable "hp" is declared as int, but the value is of type string. (scene "lobby", choice "north", phase "choice", turn 2)
+```
+
+- The **type is unchanged** — a `catch (UnknownVariableException)` still
+  catches — and so is the original message, which the suffix follows.
+  `EngineException::context()` returns the same information as
+  `array<string, string|int>` for a caller that would rather correlate than
+  read prose.
+- The four phases are `choice_condition`, `choice`, `next` and `on_enter`. The
+  two that apply effects use the same wire values as `EffectsApplied.phase`.
+- `scene` is where the **broken node** is, not where the turn started: a bad
+  node in a target scene's `on_enter` names the target.
+- `choice` is absent when there is none — in an `on_enter` phase, and in
+  everything `Transition::begin()` does. The Engine does not invent context it
+  does not have.
+- The first context wins. An error already annotated by an inner frame is
+  never re-annotated, so a message carries at most one suffix.
+- Errors that already name their own position — `UnknownSceneException`,
+  `ChoiceUnavailableException`, `RedirectLoopException` — are not annotated.
+
+Note for an Api: these messages name internal scene keys and variable names of
+possibly-unpublished content, and must not be forwarded to a client verbatim.
+
 Structural errors (`MalformedNodeException`, `UnknownOperatorException` from
 a bad `op` string) are parse-time: they fire while compiling authored content
 into AST nodes, before any `GameState` is involved. Type and resolution

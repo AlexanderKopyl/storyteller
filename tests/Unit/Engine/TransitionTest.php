@@ -6,6 +6,7 @@ namespace Storyteller\Tests\Unit\Engine;
 
 use Closure;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Storyteller\Engine\ConditionEvaluator;
 use Storyteller\Engine\EffectApplier;
@@ -14,7 +15,9 @@ use Storyteller\Engine\Exception\ChoiceUnavailableException;
 use Storyteller\Engine\Exception\ChoiceUnavailableReason;
 use Storyteller\Engine\Exception\NoNextSceneException;
 use Storyteller\Engine\Exception\RedirectLoopException;
+use Storyteller\Engine\Exception\TypeMismatchException;
 use Storyteller\Engine\Exception\UnknownSceneException;
+use Storyteller\Engine\Exception\UnknownVariableException;
 use Storyteller\Engine\NextSceneResolver;
 use Storyteller\Engine\State\GameState;
 use Storyteller\Engine\State\VariableDefinition;
@@ -584,6 +587,143 @@ final class TransitionTest extends TestCase
 
         $this->transition([['key' => 'dead_end', 'choices' => [['key' => 'go']]]])
             ->run($this->state(), 'dead_end', 'go', 1);
+    }
+
+    /**
+     * M4: `Transition` knows the scene, the choice, the phase and the turn;
+     * the evaluator and the applier know none of them. Each of the four places
+     * a turn can fail therefore names where it was, and the type a caller
+     * catches is unchanged.
+     *
+     * @param  list<array<array-key, mixed>> $scenes
+     */
+    #[DataProvider('failingPhaseProvider')]
+    public function testAnEvaluationFailureNamesTheSceneChoiceAndPhaseItCameFrom(
+        array $scenes,
+        string $choiceKey,
+        string $expectedMessage,
+    ): void {
+        try {
+            $this->transition($scenes)->run($this->state(), 'lobby', $choiceKey, 9);
+            self::fail('Expected the turn to fail.');
+        } catch (UnknownVariableException $exception) {
+            self::assertSame($expectedMessage, $exception->getMessage());
+        }
+    }
+
+    /**
+     * @return iterable<string, array{0: list<array<array-key, mixed>>, 1: string, 2: string}>
+     */
+    public static function failingPhaseProvider(): iterable
+    {
+        yield 'a choice condition' => [
+            [
+                [
+                    'key' => 'lobby',
+                    'choices' => [['key' => 'north', 'condition' => ['op' => 'gt', 'var' => 'mana', 'value' => 1]]],
+                    'next' => 'lobby',
+                ],
+            ],
+            'north',
+            'Unknown variable "mana". (scene "lobby", choice "north", phase "choice_condition", turn 9)',
+        ];
+
+        yield 'a choice effect' => [
+            [
+                [
+                    'key' => 'lobby',
+                    'choices' => [['key' => 'north', 'effects' => [['op' => 'set', 'var' => 'mana', 'value' => 1]]]],
+                    'next' => 'lobby',
+                ],
+            ],
+            'north',
+            'Unknown variable "mana". (scene "lobby", choice "north", phase "choice", turn 9)',
+        ];
+
+        yield 'a next guard' => [
+            [
+                [
+                    'key' => 'lobby',
+                    'choices' => [['key' => 'north']],
+                    'next' => [['scene' => 'lobby', 'if' => ['op' => 'eq', 'var' => 'mana', 'value' => 1]]],
+                ],
+            ],
+            'north',
+            'Unknown variable "mana". (scene "lobby", choice "north", phase "next", turn 9)',
+        ];
+
+        yield 'the target scene on_enter' => [
+            [
+                ['key' => 'lobby', 'choices' => [['key' => 'north']], 'next' => 'cave'],
+                ['key' => 'cave', 'on_enter' => [['op' => 'add', 'var' => 'mana', 'value' => 1]]],
+            ],
+            'north',
+            // The scene named is `cave`, where the broken node actually is —
+            // not `lobby`, where the turn started.
+            'Unknown variable "mana". (scene "cave", phase "on_enter", turn 9)',
+        ];
+    }
+
+    /**
+     * A failure inside an `on_enter` reached through `begin()` reads exactly
+     * as one reached through `run()`: same scene, same phase, and no `choice`
+     * key, because an entry has no choice to name. The Engine does not invent
+     * context it does not have.
+     */
+    public function testAnOnEnterFailureReadsTheSameWhetherItWasEnteredOrPlayedInto(): void
+    {
+        $scenes = [
+            ['key' => 'lobby', 'choices' => [['key' => 'north']], 'next' => 'cave'],
+            ['key' => 'cave', 'on_enter' => [['op' => 'add', 'var' => 'mana', 'value' => 1]]],
+        ];
+
+        $messages = [];
+
+        try {
+            $this->transition($scenes)->run($this->state(), 'lobby', 'north', 9);
+            self::fail('Expected the turn to fail.');
+        } catch (UnknownVariableException $exception) {
+            $messages['run'] = $exception->getMessage();
+        }
+
+        try {
+            Transition::begin(InMemoryStoryGraph::fromArray($scenes), self::schema(), $this->state(), 'cave', 9);
+            self::fail('Expected the entry to fail.');
+        } catch (UnknownVariableException $exception) {
+            $messages['begin'] = $exception->getMessage();
+        }
+
+        self::assertSame('Unknown variable "mana". (scene "cave", phase "on_enter", turn 9)', $messages['run']);
+        self::assertSame($messages['run'], $messages['begin']);
+    }
+
+    /**
+     * The decoration is additive: the original type, the original message and
+     * the structured context all survive, so a `catch (TypeMismatchException)`
+     * still catches and an Api can correlate on the array rather than on
+     * prose.
+     */
+    public function testTheDecoratedFailureKeepsItsTypeAndItsOriginalMessage(): void
+    {
+        try {
+            $this->transition([
+                [
+                    'key' => 'lobby',
+                    'choices' => [['key' => 'north', 'effects' => [['op' => 'set', 'var' => 'hp', 'value' => 'lots']]]],
+                    'next' => 'lobby',
+                ],
+            ])->run($this->state(), 'lobby', 'north', 2);
+            self::fail('Expected the turn to fail.');
+        } catch (TypeMismatchException $exception) {
+            self::assertStringStartsWith(
+                'Variable "hp" is declared as int, but the value is of type string.',
+                $exception->getMessage(),
+            );
+            self::assertSame(
+                ['scene' => 'lobby', 'choice' => 'north', 'phase' => 'choice', 'turn' => 2],
+                $exception->context(),
+            );
+        }
     }
 
     /**

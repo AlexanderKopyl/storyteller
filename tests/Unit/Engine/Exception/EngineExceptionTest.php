@@ -141,6 +141,66 @@ final class EngineExceptionTest extends TestCase
         self::assertSame(['not_found', 'condition_failed'], $values);
     }
 
+    /**
+     * M4: an evaluation-time error names a variable and nothing else. `hp` is
+     * one of four hundred scenes' worth of `hp`s, and the exception is raised
+     * from inside an evaluator that has no idea where it is. `withContext()`
+     * is how the caller that *does* know hands that knowledge to the message —
+     * without changing the type, which is what a `catch` branches on.
+     */
+    public function testWithContextAddsThePositionWithoutChangingTheType(): void
+    {
+        $original = UnknownVariableException::named('hp');
+
+        $decorated = $original->withContext([
+            'scene' => 'crossroads',
+            'choice' => 'north',
+            'phase' => 'choice',
+            'turn' => 7,
+        ]);
+
+        self::assertSame(UnknownVariableException::class, $decorated::class);
+        self::assertSame(
+            'Unknown variable "hp". (scene "crossroads", choice "north", phase "choice", turn 7)',
+            $decorated->getMessage(),
+        );
+        self::assertSame(
+            ['scene' => 'crossroads', 'choice' => 'north', 'phase' => 'choice', 'turn' => 7],
+            $decorated->context(),
+            'The context is structured as well as rendered, so a caller can log or correlate it.',
+        );
+    }
+
+    public function testAnUndecoratedExceptionHasNoContextAndAnEmptyContextChangesNothing(): void
+    {
+        self::assertSame([], UnknownVariableException::named('hp')->context());
+
+        // A caller with nothing to say says nothing: no empty parenthesis.
+        $undecorated = UnknownVariableException::named('hp')->withContext([]);
+
+        self::assertSame('Unknown variable "hp".', $undecorated->getMessage());
+        self::assertSame([], $undecorated->context());
+    }
+
+    /**
+     * The innermost frame that knows where it is wins: an outer `catch` that
+     * decorates an already-decorated error would otherwise bury the precise
+     * position under a vaguer one, and append a second parenthesis while doing
+     * it.
+     */
+    public function testTheFirstContextWinsAndTheMessageIsNeverDecoratedTwice(): void
+    {
+        $decorated = UnknownVariableException::named('hp')
+            ->withContext(['scene' => 'cave', 'phase' => 'on_enter'])
+            ->withContext(['scene' => 'lobby', 'phase' => 'choice']);
+
+        self::assertSame(
+            'Unknown variable "hp". (scene "cave", phase "on_enter")',
+            $decorated->getMessage(),
+        );
+        self::assertSame(['scene' => 'cave', 'phase' => 'on_enter'], $decorated->context());
+    }
+
     public function testTheRootIsAbstractAndIsTheOnlyAbstractExceptionInTheFamily(): void
     {
         $root = new ReflectionClass(EngineException::class);

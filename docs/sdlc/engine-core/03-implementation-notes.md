@@ -1030,3 +1030,56 @@ red message recorded for each, `cs-fix` + `phpstan` after each.
   evaluator nor the resolver the constructor demands; and `begin()` therefore builds its own
   `EffectApplier` from the schema, the one piece of wiring `Transition` now knows about
   itself. The shared tail is a private static for the same reason.
+
+### F3 — evaluation-time errors say where they happened (M4, major)
+
+- **Red first.** Four new cases in `tests/Unit/Engine/Exception/EngineExceptionTest.php` and
+  three in `tests/Unit/Engine/TransitionTest.php`:
+
+  ```
+  Error: Call to undefined method Storyteller\Engine\Exception\UnknownVariableException::withContext()
+  Error: Call to undefined method Storyteller\Engine\Exception\TypeMismatchException::context()
+  TransitionTest::testAnEvaluationFailureNamesTheSceneChoiceAndPhaseItCameFrom@a choice condition
+    Failed asserting that two strings are identical.
+    -'Unknown variable "mana". (scene "lobby", choice "north", phase "choice_condition", turn 9)'
+    +'Unknown variable "mana".'
+  ```
+
+- **Changed.** `EngineException` gains `withContext(array<string,string|int>): static` and
+  `context(): array`. The **same object** is annotated and returned rather than a new
+  exception wrapping it: the type a caller catches is unchanged (the finding's explicit
+  constraint) and the stack trace still starts at the line that detected the problem instead
+  of at the `catch` that annotated it — which is why `previous` is not used here, there being
+  no second exception to chain. The first context wins, so a message carries at most one
+  suffix; an empty context is a no-op rather than an empty parenthesis.
+  `Transition` gains one private `inContext(array $context, callable $phase)` wrapping the
+  four places a turn can fail: the choice condition, the choice effects, the `next`
+  resolution and each `on_enter`. Phases that apply effects use `EffectPhase`'s own wire
+  values, so a message and an `EffectsApplied` event say `choice` and `on_enter` the same way.
+- **What is deliberately *not* annotated.** `UnknownSceneException`,
+  `ChoiceUnavailableException` and `RedirectLoopException` already name their own position,
+  and annotating them would have changed messages three existing tests assert literally. The
+  `on_enter` context carries **no `choice` key**: an entry through `begin()` has no choice,
+  and a turn's choice is not where a broken `on_enter` node is. "Do not make the context
+  mandatory where the Engine genuinely does not have it."
+- **Files:** `src/Engine/Exception/EngineException.php`, `src/Engine/Transition.php`,
+  `docs/engine/ast.md`; tests in `tests/Unit/Engine/Exception/EngineExceptionTest.php`,
+  `tests/Unit/Engine/TransitionTest.php`.
+- **Tests added:** seven. On the exception: the message and the structured context, with the
+  type asserted unchanged; no context by default and an empty context changing nothing; the
+  first context winning over a second. On the transition: a four-row provider, one per phase,
+  each asserting the **whole** message; the same `on_enter` failure reached through `run()`
+  and through `begin()` reading identically; and a `TypeMismatchException` keeping its type,
+  its original message as a prefix, and its context as an array.
+- **Falsified.** `inContext()` reduced to `return $phase();` → all 6 transition cases fail.
+  The first-context-wins guard removed → the double-decoration case fails. Each probe
+  reverted by file copy.
+- **Docs.** `docs/engine/ast.md` *Error behaviour* gains a *Where an evaluation-time error
+  happened* subsection: the suffix format, the four phase names, which exceptions are not
+  annotated, that `scene` is where the broken node is rather than where the turn started, and
+  the standing note that these messages name unpublished content and must not reach a client
+  verbatim.
+- **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
+  deptrac `Violations 0 / Uncovered 0` · test `OK (562 tests, 8012 assertions)`.
+- **Commit:** `fix(engine): say where an evaluation-time error happened`
+- **Deviations:** none.
