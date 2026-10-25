@@ -7,7 +7,7 @@ Vue 3 (CDN) frontend for the MVP.
 
 | Context       | Responsibility                                                              |
 |---------------|-----------------------------------------------------------------------------|
-| `src/Engine`  | Pure PHP rules: `GameState`, `ConditionEvaluator`, `EffectApplier`, `TransitionResolver`. Framework-free, deterministic, no I/O. |
+| `src/Engine`  | Pure PHP rules: `GameState`, `ConditionEvaluator`, `EffectApplier`, `NextSceneResolver`, `Transition`. Framework-free, deterministic, no I/O. |
 | `src/Content` | Story definitions, authoring, versioning, YAML → compiled JSONB snapshot.   |
 | `src/Play`    | Play sessions, event log, progress.                                         |
 | `src/Api`     | HTTP controllers, DTOs, serialization, auth.                                |

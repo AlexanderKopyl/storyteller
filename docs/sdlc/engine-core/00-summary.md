@@ -2,8 +2,8 @@
 
 The pure, deterministic, framework-free rules engine: `src/Engine`.
 
-- **Commits:** 38, `065803d..d4ba1b8`
-- **Diff:** 84 files, +11,827 / −1
+- **Commits:** 51, `065803d..85493bb`
+- **Diff:** 94 files, +16,246 / −5
 - **Phase documents:** `01-analysis.md` · `02-plan.md` · `03-implementation-notes.md` · `04-review.md` · `05-test-report.md`
 - **Published spec:** `docs/engine/ast.md`
 
@@ -20,15 +20,15 @@ The pure, deterministic, framework-free rules engine: `src/Engine`.
 
 ## The four checks
 
-Run by the orchestrator at `d4ba1b8`, inside the `php` container, quoting each command's own output:
+Run by the orchestrator at `85493bb`, inside the `php` container, quoting each command's own output:
 
 | Check | Result |
 |-------|--------|
 | `composer cs-check` | `Found 0 of 87 files that can be fixed` |
 | `composer phpstan` | `[OK] No errors` (level 8, no baseline, zero `@phpstan-ignore`) |
 | `composer deptrac` | `Violations 0 · Skipped 0 · Uncovered 0 · Allowed 0 · Warnings 0 · Errors 0` |
-| `composer test` | `OK (542 tests, 7923 assertions)` |
-| `composer coverage` | `Lines: 100.00% (655/655)` · `Classes: 100.00% (44/44)` · `Methods: 100.00% (189/189)` |
+| `composer test` | `OK (566 tests, 12192 assertions)` |
+| `composer coverage` | `Lines: 100.00% (691/691)` · `Classes: 100.00% (45/45)` · `Methods: 100.00% (196/196)` |
 
 `composer qa` exit 0.
 
@@ -69,16 +69,26 @@ Gate C ran twice. **0 blockers remain.**
 | **r1** | `toArray() === toArray()` differs for semantically equal states. Pinned in executable form: JSON identical, raw `===` not. | `f68ce66` |
 | **r2** | `Float->accepts(9007199254740993)` canonicalises to `...992.0`. Pinned at type level and as `eq`. | `ce2046e` |
 
-### Open — not fixed, carried deliberately
+### Closed in the follow-up loop
 
-| Id | Finding | Why deferred |
-|----|---------|--------------|
-| **r3 / B1-b** *(major)* | `GameState::fromArray()` accepts any scalar from JSONB; nothing validates a loaded state against its schema. With `hp => "10"` under an `int` declaration: `eq` false, `gt` true, `add` throws, `set` succeeds — four operators, three policies, one malformed state. | Wants `VariableSchema::assertState()` at the **load** boundary. That is a persistence decision belonging with `Play`; nothing persists yet. **Must close before `Play` stores anything.** |
-| **M1** *(major)* | No entry point for the *first* scene: its `on_enter` never runs, so `Play` would reimplement D-VISIT and D-REDIRECT itself. | Adds public API beyond the specified `Transition::run` signature — a user decision. **Becomes a breaking change once `Content` or `Play` exists.** |
-| **M4** *(major)* | Evaluation-time errors carry no scene/choice/phase, though `Transition` holds all three. | Debuggability, not correctness. |
-| **r2 docblock** *(minor)* | `VariableType.php:13-16` still says widening int→float "loses nothing" — the stated justification for the whole asymmetry, and false above 2⁵³. The behaviour is now pinned by tests; the comment is wrong. | Comment-only; needs the implementer. |
-| minors | Impossible-scenario docblocks on `visited`; nine public methods with no production call site; `RedirectLoopException` naming an unreached scene; purity scan missing `getenv`/`spl_object_id`/file I/O; `requireIntMap`/`requireScalarMap` accepting a positional array. | Low consequence. |
-| — | No mutation-testing tool. The suite's falsification was done by hand. | A new dependency; standing rule 9 requires a plan entry first. |
+Every finding carried out of Gate C was closed afterwards at the user's request.
+
+| Id | Finding | Commit |
+|----|---------|--------|
+| **r3 / B1-b** *(major)* | `GameState::fromArray()` accepted any scalar from JSONB with nothing validating a loaded state against its schema. With `hp => "10"` under an `int` declaration: `eq` false, `gt` true, `add` throws, `set` succeeds — four operators, three policies, one malformed state. Closed with `VariableSchema::assertState()` at the **load** boundary: one check per session load, a loud error instead of a quiet wrong answer. `GameState` stays schema-free. | `f8ad90e` |
+| **M1** *(major)* | No entry point for the *first* scene, so its `on_enter` never ran and `Play` would have reimplemented D-VISIT and D-REDIRECT itself. Closed with `Transition::begin()`, sharing `run()`'s private `enter()` tail so the two cannot drift. | `7a73c1e` |
+| **M4** *(major)* | Evaluation-time errors carried no scene/choice/phase although `Transition` held all three. | `d5f43aa` |
+| **r2 docblock** | `VariableType.php` claimed widening int→float "loses nothing" — the stated justification for the whole asymmetry, and false above 2⁵³. | `9ff5d22` |
+| minors | Impossible-scenario docblocks on `visited`; nine public methods with no production call site; `RedirectLoopException` naming an unreached scene; the purity scan not forbidding `getenv`/`spl_object_id`/file I/O; `requireIntMap`/`requireScalarMap` accepting a positional array where a map is required. | `aac3391` · `77cf560` · `8feb6c9` · `62aaec9` · `146ca04` |
+| **API correction** | `begin()` shipped **static** while `run()` is an instance method, and built its own `EffectApplier` — so an injected applier was honoured by one entry point and silently ignored by the other. The static shape was specified by the orchestrator, not chosen by the implementer. Corrected to an instance method sharing `run()`'s collaborators, with a test pinning that both entry points use the same applier. | `85493bb` |
+
+On **m2** (nine public methods with no production call site): one was genuinely orphaned and removed — `ArrayReader::child()`. The other eight were kept with a one-line justification naming the future consumer at each declaration, e.g. `ChoiceNode::isAlwaysAvailable()` for when `Api` lists choices without state, `SceneNode::hasChoice()` so `Api` can distinguish 404 from 409 without attempting a turn. "Unused" in a codebase whose consumer contexts do not exist yet is not evidence of dead code.
+
+### Still open
+
+| Item | Why |
+|------|-----|
+| No mutation-testing tool | The suite's falsification was done by hand — 14 probes in the Test phase, more during the build. Automating it means a new dependency, and standing rule 9 requires a plan entry first. |
 
 ### Known non-defect
 
@@ -120,8 +130,15 @@ Every check in this document was re-run by the orchestrator rather than taken fr
 
 ## Open items for the user
 
-1. **M1 — first-scene entry point.** Decide before `Content` is planned; it is a breaking change afterwards.
-2. **r3 — `VariableSchema::assertState()` at the load boundary.** Must close before `Play` persists anything.
-3. **CLAUDE.md names `TransitionResolver`** in the `src/Engine` row; the class is `Transition`. Stale reference.
-4. **Whether 100% line coverage should be machine-enforced** (a `--coverage-text` threshold in the `qa` chain) rather than checked by hand.
-5. **The `opus` capability floor in `.claude/skills/sdlc/SKILL.md`** leaves no room to escalate for `src/Engine` work. Worth stating explicitly that the floor is also the ceiling there.
+Every review finding is closed. What remains is process, not product:
+
+1. **Whether 100% line coverage should be machine-enforced** — a threshold in the `qa` chain rather than a figure checked by hand. Note that the number is saturated and therefore carries little information on its own; what this feature actually relied on was falsifying each test against a deliberate mutation. A coverage threshold would not have caught the B1 blocker, which shipped under 100% coverage and 451 passing tests.
+2. **Mutation testing**, which would automate that falsification. New dependency, so standing rule 9 applies: it needs a plan entry first.
+3. **The `opus` capability floor in `.claude/skills/sdlc/SKILL.md`** leaves no room to escalate for `src/Engine` work — the floor is also the ceiling, so both Gate C loops ran at the top tier by the floor rather than by escalation. Worth stating explicitly, since the escalation rule as written assumes headroom that does not exist here.
+4. **Two commits on `origin/main` carry the subject `Squash-ready commit message:`** (`e5dff21`, `dffd765`) — the proposed message was pasted whole, so the real `feat(engine):` subject sits in the body. `e5dff21` also carries `Dockerfile`, `CLAUDE.md` and the `.claude/` files under an engine-feature body, though it contains no engine code. Already pushed; correcting them means rewriting published history.
+
+### A note for whoever plans `Content` and `Play`
+
+- `StoryGraph` is the contract `Content` implements. `Transition` is what `Play` calls — through `run()` for a turn and `begin()` for a story's opening scene. Use `begin()`; do not reimplement entry.
+- Call `VariableSchema::assertState()` once when loading a saved state. The Engine trusts its inputs by design (CLAUDE.md rule 5); this is the boundary where that trust is established.
+- Compare two `GameState`s by their encoded JSON or through `resolve()`, **never** with `===` on `toArray()`. A `float`-declared variable holding a PHP `int` makes two semantically equal states differ under `===` while their JSON is byte-identical. Pinned by test `f68ce66`.
