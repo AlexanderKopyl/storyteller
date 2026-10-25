@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Storyteller\Engine\Exception\MalformedNodeException;
 use Storyteller\Engine\Exception\TypeMismatchException;
 use Storyteller\Engine\Exception\UnknownVariableException;
+use Storyteller\Engine\State\GameState;
 use Storyteller\Engine\State\VariableDefinition;
 use Storyteller\Engine\State\VariableSchema;
 use Storyteller\Engine\State\VariableType;
@@ -99,6 +100,32 @@ final class VariableSchemaTest extends TestCase
         $this->expectException(UnknownVariableException::class);
 
         self::schema()->assertAccepts('mana', 7);
+    }
+
+    public function testResolveReturnsTheStateValueWhenPresent(): void
+    {
+        $state = GameState::initial()->withVar('hp', 42);
+
+        self::assertSame(42, self::schema()->resolve('hp', $state));
+    }
+
+    public function testResolveReturnsTheSchemaDefaultWhenTheStateHasNoValue(): void
+    {
+        self::assertSame(
+            100,
+            self::schema()->resolve('hp', GameState::initial()),
+            'Resolution never yields null; the schema default stands in.',
+        );
+    }
+
+    public function testResolveThrowsForANameNotInTheSchemaEvenWhenTheStateCarriesIt(): void
+    {
+        $state = GameState::initial()->withVar('mana', 5);
+
+        $this->expectException(UnknownVariableException::class);
+        $this->expectExceptionMessage('mana');
+
+        self::schema()->resolve('mana', $state);
     }
 
     public function testEmptySchemaHasNoNames(): void

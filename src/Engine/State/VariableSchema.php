@@ -99,6 +99,23 @@ final readonly class VariableSchema
     }
 
     /**
+     * The single variable-resolution point in the Engine.
+     *
+     * A name the schema does not declare is an error even when the state
+     * carries a value for it; a declared name the state says nothing about
+     * resolves to the declared default. The result is never null, so no
+     * operator has to decide what a missing variable means.
+     *
+     * @throws UnknownVariableException if the name is not declared
+     */
+    public function resolve(string $name, GameState $state): int|float|string|bool
+    {
+        $definition = $this->definition($name);
+
+        return $state->hasVar($name) ? $state->var($name) : $definition->default;
+    }
+
+    /**
      * @throws UnknownVariableException if the name is not declared
      * @throws TypeMismatchException    if the value does not match the declaration
      */
