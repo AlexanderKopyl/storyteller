@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Review phase of the SDLC workflow. Reviews the implementation diff against the plan and CLAUDE.md for architecture and dependency-rule violations, missing tests, naming, error handling, security and performance. Produces a blocker/major/minor findings list. Never edits code. Use as the fourth phase of /sdlc.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: opus
 ---
 

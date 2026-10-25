@@ -1,7 +1,7 @@
 ---
 name: analyst
 description: Analyze phase of the SDLC workflow. Reads the request, existing code and docs, clarifies scope, lists affected bounded contexts, risks, open questions and acceptance criteria. Read-only — never writes product code. Use as the first phase of /sdlc.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: opus
 ---
 

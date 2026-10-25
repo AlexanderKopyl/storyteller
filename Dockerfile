@@ -23,6 +23,14 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove \
     && rm -rf /var/lib/apt/lists/*
 
+# PCOV supplies the line-coverage driver. Without a driver PHPUnit does not fail - it
+# prints "No code coverage driver available" and exits 0 - so a coverage threshold would
+# be unverifiable rather than red. PCOV rather than Xdebug: it is coverage-only and much
+# faster, and Xdebug silently produces nothing unless XDEBUG_MODE=coverage is also set.
+# No extra build packages are needed: the official php images keep PHPIZE_DEPS installed.
+RUN pecl install pcov \
+    && docker-php-ext-enable pcov
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY docker/php/php.ini /usr/local/etc/php/conf.d/99-storyteller.ini
 

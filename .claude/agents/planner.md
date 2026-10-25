@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Plan phase of the SDLC workflow. Turns an approved analysis into an ordered, file-by-file implementation plan with public interfaces, tests to write first, migration needs and deptrac impact. Read-only — never writes product code. Use as the second phase of /sdlc.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Write
 model: opus
 ---
 

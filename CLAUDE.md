@@ -61,3 +61,19 @@ Other commands: `php bin/console ...` (Symfony CLI), `docker compose up -d` (Pos
    The orchestrator picks each phase's model per step — Engine, migrations,
    cross-context interfaces and security always run on the strongest tier.
 9. Don't add dependencies without saying why in the plan document first.
+
+## CODEBASE NAVIGATION POLICY
+
+- Never read an entire source file unless necessary.
+- Prefer symbol/LSP/Serena navigation over filesystem exploration.
+- Search in this order:
+    1. symbol / definition / references
+    2. semantic/codebase search
+    3. Grep/Glob
+    4. targeted Read with minimal line range
+- Do not use Bash ls/find/cat for code discovery when dedicated tools exist.
+- Do not inspect vendor/, generated/, var/, cache/ unless explicitly relevant.
+- For files >300 lines, read only the relevant symbol or line range first.
+- Return discovered paths, symbols and conclusions; do not dump source code.
+- Do not ask the user questions unless progress is genuinely blocked.
+- Make reasonable implementation assumptions and continue.
