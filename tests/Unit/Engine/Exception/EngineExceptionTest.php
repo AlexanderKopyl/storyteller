@@ -407,10 +407,13 @@ final class EngineExceptionTest extends TestCase
             ['crossroads'],
         ];
 
+        // m3: the scene named is the one the refused hop was headed *to* —
+        // which, when the budget runs out, is precisely the scene that was
+        // never entered. The fragment list includes the verb for that reason.
         yield 'RedirectLoopException::exceeded' => [
             static fn (): EngineException => RedirectLoopException::exceeded(5, 'cave'),
             RedirectLoopException::class,
-            ['5', 'cave'],
+            ['5', 'the redirect to "cave" was refused'],
         ];
     }
 

@@ -358,16 +358,17 @@ final class TransitionTest extends TestCase
         }
 
         self::assertSame(
-            'Redirect budget of 5 exceeded; the last scene reached was "b".',
+            'Redirect budget of 5 exceeded; the redirect to "b" was refused.',
             $messages['self'],
         );
         // The sixth hop of b -> c -> b -> c -> b -> c is back to `b`, and `b`
-        // is what the message names — the scene the turn was *about to* enter
-        // when it was refused, which for this cycle happens to also be a scene
-        // it did enter. The acyclic case below shows the difference: `h6` was
-        // never reached at all (review m3).
+        // is what the message names: the scene the refused redirect was headed
+        // to, which for this cycle happens to be one the turn did enter
+        // earlier. The acyclic case below is the one that shows why the
+        // wording matters — `h6` was never reached at all, so calling it "the
+        // last scene reached" pointed at the wrong end of the chain (m3).
         self::assertSame(
-            'Redirect budget of 5 exceeded; the last scene reached was "b".',
+            'Redirect budget of 5 exceeded; the redirect to "b" was refused.',
             $messages['ping-pong'],
         );
 
@@ -378,7 +379,7 @@ final class TransitionTest extends TestCase
             self::fail('A six-hop chain did not throw.');
         } catch (RedirectLoopException $exception) {
             self::assertSame(
-                'Redirect budget of 5 exceeded; the last scene reached was "h6".',
+                'Redirect budget of 5 exceeded; the redirect to "h6" was refused.',
                 $exception->getMessage(),
             );
         }

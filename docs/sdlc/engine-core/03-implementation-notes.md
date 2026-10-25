@@ -1174,3 +1174,29 @@ One used, one removed, seven justified in a line each at their declaration.
 - **Checks:** cs-check 0 of 87 · phpstan `[OK] No errors` · deptrac `Violations 0` · test
   `OK (563 tests, 8014 assertions)` (one assertion fewer: the removed `child()` case).
 - **Commit:** `refactor(engine): use isRedirect and justify the unused public surface`
+
+### F7 — `RedirectLoopException` named the one scene that was never reached (m3, minor)
+
+- **Red first.** The three literal message assertions in `TransitionTest` were changed to the
+  new wording before the source was:
+
+  ```
+  TransitionTest::testAGotoBackIntoTheSceneBeingEnteredIsStoppedByTheBudgetNotByCycleDetection
+    -'Redirect budget of 5 exceeded; the redirect to "b" was refused.'
+    +'Redirect budget of 5 exceeded; the last scene reached was "b".'
+  ```
+
+- **Changed.** The message now reads `Redirect budget of %d exceeded; the redirect to "%s"
+  was refused.` and the parameter is `$refusedScene`. The guard runs *before* the hop is
+  taken, so the scene it names is the one the turn never entered — for the six-hop chain,
+  `h6` — and "the last scene reached" sent an operator to the wrong end of the chain. The
+  named constructor's docblock now states which end it is and why.
+- **Files:** `src/Engine/Exception/RedirectLoopException.php`, `docs/engine/ast.md`; tests in
+  `tests/Unit/Engine/TransitionTest.php`, `tests/Unit/Engine/Exception/EngineExceptionTest.php`.
+- **Tests:** the three literals, plus `EngineExceptionTest`'s fragment for this constructor
+  tightened from `'cave'` to `'the redirect to "cave" was refused'` — the fragment list was
+  satisfied by both wordings and would not have noticed.
+- **Docs.** `docs/engine/ast.md`'s redirect-budget bullet and the error table now say which
+  scene is named, and the table row covers `begin()` as well as `run()`.
+- **Checks:** cs-check 0 of 87 · phpstan `[OK] No errors` · test `OK (563 tests, 8014 assertions)`.
+- **Commit:** `fix(engine): name the refused redirect, not the scene never reached`

@@ -402,7 +402,10 @@ intent is "the first time the player is standing here with a choice to make".
   the counter by one.
 - The guard runs after every increment (including the choice-effect `goto`'s
   initial set to `1`): if the counter exceeds `5`, `RedirectLoopException` is
-  thrown, naming the limit and the last scene reached before the throw.
+  thrown, naming the limit and the scene the refused hop was headed **to** —
+  which, the guard running before the hop is taken, is the one scene in the
+  chain that was *not* entered: `Redirect budget of 5 exceeded; the redirect
+  to "h6" was refused.`
 
 So **five real redirects complete a turn successfully; the sixth throws**.
 A choice-effect `goto` followed by four `on_enter` redirects (five total)
@@ -640,7 +643,7 @@ concrete classes, all under `src/Engine/Exception/`:
 | `UnknownSceneException` | A scene key the `StoryGraph` does not know is asked for — the current scene at the start of a transition, or any scene reached via `next` or a `goto` redirect. |
 | `ChoiceUnavailableException` | The named choice does not exist on the current scene (`notFound()`), or it exists but its `condition` evaluates to `false` (`conditionFailed()`). The two are **not** distinguished by their message: every instance carries `public readonly ChoiceUnavailableReason $reason`, either `NotFound` (`"not_found"`) or `ConditionFailed` (`"condition_failed"`). They are different answers at an HTTP boundary — a client cannot retry its way out of the first, while the second is a state conflict and legitimately racy — so a caller branches on `$reason`, never on the prose. |
 | `NoNextSceneException` | A scene's `next` rule list (including an empty one) ran out with no rule matching and no unconditional fallback present. |
-| `RedirectLoopException` | A single `Transition::run()` spent more than `Transition::MAX_REDIRECTS` (5) redirects. Carries the limit and the last scene reached. |
+| `RedirectLoopException` | A single `Transition::run()` or `Transition::begin()` spent more than `Transition::MAX_REDIRECTS` (5) redirects. Carries the limit and the scene the refused redirect was headed to — the one the turn never entered. |
 
 ### Where an evaluation-time error happened
 
