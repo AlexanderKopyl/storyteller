@@ -922,3 +922,60 @@ now machine-held by `EnginePurityTest` rather than re-run by hand. `git diff --s
   not listed in any `#[CoversClass]`.
 - `tests/Unit/Engine/Double/InMemoryStoryGraph.php` is exercised by `TransitionTest` only; it
   is deliberately under `tests/` (AC-10) and therefore outside the coverage filter.
+
+---
+
+## Follow-up loop — the user's open items (2026-10-25)
+
+Closes everything `00-summary.md` listed as open: **r3 / B1-b**, **M1**, **M4**, the **r2
+docblock** and the five minors. Started at `dffd765`. One commit per item, test first, the
+red message recorded for each, `cs-fix` + `phpstan` after each.
+
+### F1 — `VariableSchema::assertState()`, the load boundary (r3 / B1-b, major)
+
+- **Red first.** `tests/Unit/Engine/State/VariableSchemaTest.php`, four new cases:
+
+  ```
+  Error: Call to undefined method Storyteller\Engine\State\VariableSchema::assertState()
+  ```
+
+- **Changed.** One method on `VariableSchema`, three lines of body: iterate `$state->vars`
+  and call the existing `assertAccepts()` on each. That single call already does both halves
+  the finding asks for — `typeOf()` throws `UnknownVariableException` for an undeclared name,
+  `accepts()` throws `TypeMismatchException` for a disagreeing type — and it is the
+  **canonicalising** acceptance, so `ratio => 1` under a `float` declaration passes and the
+  B1 rule does not regress. The weight of the change is in the docblock and the tests, not
+  the body.
+- **`GameState::fromArray()` is untouched**, as instructed: `GameState` carries no schema by
+  design, and this is a method the caller invokes after loading.
+- **Policy note, deliberate.** `assertState()` **rejects** an undeclared name while
+  `StateDiff::between()` **skips** one (M2's fix). That is not an inconsistency: the diff
+  runs on every phase of every turn and must not brick a session over a variable a newer
+  story version retired, while `assertState()` runs once, at load, where the caller can still
+  refuse or migrate the session. Both policies are now stated in their own docblocks and in
+  `docs/engine/ast.md`. Consequence worth knowing for `Play`:
+  `ContentVersioningTest::testAVariableTheNewerSchemaNoLongerDeclaresIsCarriedThroughATurn`
+  describes a state `assertState()` would reject — playing it is still legal, loading it
+  blind is what is now refusable.
+- **Files:** `src/Engine/State/VariableSchema.php`, `docs/engine/ast.md`;
+  `tests/Unit/Engine/State/VariableSchemaTest.php`.
+- **Tests added:** four. The agreeing state (including `ratio => 1`, an absent declared
+  variable and `GameState::initial()`); the re-review's own probe — `eq` false, `gt` true,
+  `set` succeeds, `add` throws, all four pinned as they are, followed by the one loud answer
+  `assertState()` gives; the undeclared name; and the canonical-order case, which builds the
+  same three-way-broken state forwards and backwards and asserts both produce the identical
+  message.
+- **Falsified both ways.** Body replaced by a no-op → 3 of the 4 fail
+  (`Failed asserting that exception of type "…TypeMismatchException" is thrown`,
+  the same for `UnknownVariableException`, `The forwards state was accepted`). Body replaced
+  by a strict `get_debug_type($value) !== $type->value` check (the tightening that would
+  regress B1) → the agreeing case fails with
+  `Variable "ratio" is declared as float, but the value is of type int.` A check that only
+  refused, or only accepted, would be caught.
+- **Docs.** `docs/engine/ast.md` gains a `VariableSchema::assertState()` subsection stating
+  the obligation on a loading caller, both policies and why they differ, and the four-way
+  probe as the motivation.
+- **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
+  deptrac `Violations 0 / Uncovered 0` · test `OK (546 tests, 7947 assertions)`.
+- **Commit:** `feat(engine): validate a loaded state against its schema`
+- **Deviations:** none.

@@ -471,6 +471,40 @@ back as a `float`, because the default is canonicalised when the
 `VariableDefinition` is constructed. See the acceptance rule under
 *Conventions*.
 
+### `VariableSchema::assertState(GameState $state): void` — the load boundary
+
+`GameState` carries no schema, so `GameState::fromArray()` accepts whatever
+scalar the `play_session` column holds. **A caller that loads a state from
+storage must call `assertState()` on it once, before handing it to a
+`Transition`.** It is the Engine's only whole-state validation and it is not
+called from inside the Engine: the Engine trusts its inputs, and this is the
+method that makes that trust earnable.
+
+- A `vars` value whose PHP type its declaration does not accept throws
+  `TypeMismatchException`. `vars` is key-sorted, so the name reported is the
+  first disagreement in canonical order — the same broken state always
+  produces the same message.
+- A `vars` name the schema does **not** declare throws
+  `UnknownVariableException`. This is deliberately stricter than
+  `StateDiff::between()`, which skips an undeclared name: the diff runs on
+  every phase of every turn and must not brick a playable session, while this
+  runs once, at load, where the caller can still refuse the session or migrate
+  it. A session pinned to a story version that retired a variable is a
+  decision for the caller, not a silent pass.
+- Acceptance is the canonicalising one: an integral `float` that JSON wrote as
+  `1` and returned as an `int` **passes**. Refusing it would brick every saved
+  session carrying a float variable (see B1 under *Conventions*).
+- A declared variable the state says nothing about is not a disagreement; it
+  resolves to its declared default.
+- `flags`, `inventory`, `visited` and `history` are not schema-declared and
+  are already structurally typed by `fromArray()`, so nothing here looks at
+  them.
+
+Without this check one disagreeing value is answered differently by every
+operator that meets it — for `hp => "10"` under `{"type": "int"}`, `eq hp == 10`
+is `false`, `gt hp > 5` is `true`, `add` throws and `set` overwrites. Four code
+paths, three policies, no error.
+
 ## `StateDiff` — the `EffectsApplied` payload
 
 ```json

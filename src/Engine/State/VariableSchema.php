@@ -152,6 +152,44 @@ final readonly class VariableSchema
     }
 
     /**
+     * Validates a whole loaded state against this schema — the one check a
+     * caller makes after reading a session out of its JSONB column, before
+     * handing the state to a `Transition`.
+     *
+     * The Engine cannot make this check for itself: `GameState` carries no
+     * schema by design, so `GameState::fromArray()` accepts any scalar the
+     * column holds. Without a boundary check, one disagreeing value is
+     * answered differently by every operator that meets it — `eq` reports
+     * `false`, `gt` reports `true`, `add` throws and `set` overwrites — four
+     * code paths, three policies, no error (review r3 / B1-b). One loud
+     * failure per load is worth more than four quiet answers per turn.
+     *
+     * Acceptance is the canonicalising one, so an integral `float` that JSON
+     * wrote as `1` and handed back as an `int` passes: that is the B1 rule,
+     * and tightening it here would brick every saved session carrying a float.
+     * A declared variable the state says nothing about is not a disagreement
+     * either — it resolves to its default.
+     *
+     * Undeclared names are **rejected**, unlike {@see StateDiff::between()},
+     * which skips them. The two run at different moments and the policies
+     * follow from that: the diff runs on every phase of every turn and must
+     * not brick a playable session over a variable a newer story version
+     * retired, while this runs once, at load, where the caller can still
+     * refuse the session or migrate it.
+     *
+     * @throws UnknownVariableException if the state carries a name the schema does not declare
+     * @throws TypeMismatchException    if a value does not match its declaration; the state's
+     *                                  `vars` are key-sorted, so the name reported is the first
+     *                                  disagreement in canonical order and never varies
+     */
+    public function assertState(GameState $state): void
+    {
+        foreach ($state->vars as $name => $value) {
+            $this->assertAccepts($name, $value);
+        }
+    }
+
+    /**
      * @return list<string> sorted
      */
     public function names(): array
