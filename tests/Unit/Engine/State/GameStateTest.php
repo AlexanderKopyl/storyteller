@@ -193,6 +193,33 @@ final class GameStateTest extends TestCase
     }
 
     /**
+     * m5, at the envelope: a JSON array where the format says map was read as
+     * variables named `0` and `1`, or items named `0` and `1` — a malformed
+     * state loading successfully and failing somewhere else later, if at all.
+     * The empty case must keep loading, because PHP has one array type and an
+     * empty map is written as `[]`.
+     */
+    public function testFromArrayRejectsAPositionalListWhereAMapIsRequired(): void
+    {
+        foreach (['vars', 'inventory', 'visited'] as $key) {
+            $data = self::fullArray();
+            $data[$key] = [1, 2];
+
+            try {
+                GameState::fromArray($data);
+                self::fail(sprintf('A positional list was accepted for "%s".', $key));
+            } catch (MalformedNodeException $exception) {
+                self::assertStringContainsString($key, $exception->getMessage());
+                self::assertStringContainsString('list', $exception->getMessage());
+            }
+        }
+
+        $empty = ['v' => 1, 'vars' => [], 'flags' => [], 'inventory' => [], 'visited' => [], 'history' => []];
+
+        self::assertSame($empty, GameState::fromArray($empty)->toArray());
+    }
+
+    /**
      * @param array<array-key, mixed> $data
      */
     #[DataProvider('roundTripProvider')]

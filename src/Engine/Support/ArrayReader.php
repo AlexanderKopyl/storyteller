@@ -198,7 +198,7 @@ final readonly class ArrayReader
      */
     public function requireIntMap(string $key): array
     {
-        $raw = $this->requireArray($key);
+        $raw = $this->requireMap($key);
         $out = [];
 
         foreach ($raw as $name => $value) {
@@ -222,7 +222,7 @@ final readonly class ArrayReader
      */
     public function requireScalarMap(string $key): array
     {
-        $raw = $this->requireArray($key);
+        $raw = $this->requireMap($key);
         $out = [];
 
         foreach ($raw as $name => $value) {
@@ -239,6 +239,32 @@ final readonly class ArrayReader
         }
 
         return $out;
+    }
+
+    /**
+     * An array that is a map, not a positional list.
+     *
+     * The mirror of `requireArrayList`'s `array_is_list()` check, and for the
+     * same reason: `{"vars": [1, 2]}` would otherwise be read as two variables
+     * named `0` and `1`, a shape nothing later can make sense of and which
+     * fails far away from the envelope that carried it, if at all.
+     *
+     * **An empty array is accepted as a map**, and must be: PHP has one array
+     * type, so an empty map and an empty list are both `[]`, and `json_encode`
+     * writes a state with no variables as `"vars": []`. Refusing it would
+     * refuse every fresh session.
+     *
+     * @return array<array-key, mixed>
+     */
+    private function requireMap(string $key): array
+    {
+        $raw = $this->requireArray($key);
+
+        if ($raw !== [] && array_is_list($raw)) {
+            throw MalformedNodeException::wrongType($this->path, $key, 'map', 'list');
+        }
+
+        return $raw;
     }
 
     /**

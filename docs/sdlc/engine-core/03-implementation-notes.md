@@ -1231,3 +1231,33 @@ One used, one removed, seven justified in a line each at their declaration.
   assertions)` — the assertion count jumps because the scan asserts once per pattern per
   Engine file.
 - **Commit:** `test(engine): forbid the environment, object identity and I/O`
+
+### F9 — a positional list was accepted where the envelope requires a map (m5, minor)
+
+- **Red first.**
+
+  ```
+  GameStateTest::testFromArrayRejectsAPositionalListWhereAMapIsRequired
+    A positional list was accepted for "vars".
+  ArrayReaderTest::testTheMapReadersRejectANonEmptyListButStillAcceptAnEmptyOne
+    Expected a MalformedNodeException, none was thrown.
+  ```
+
+- **Changed.** One new private `ArrayReader::requireMap()` — the mirror of
+  `requireArrayList`'s `array_is_list()` check — used by both `requireIntMap()` and
+  `requireScalarMap()`. A **non-empty** list is now `wrongType(..., 'map', 'list')`; the
+  empty array stays a valid map, because PHP has one array type and `json_encode` writes a
+  state with no variables as `"vars": []`. Refusing that would refuse every fresh session.
+- **Why it is not cosmetic.** `{"vars": [1, 2]}` loaded as two variables named `0` and `1`,
+  which no schema declares, so the failure surfaced later and elsewhere — and after F1, at a
+  different boundary again. A malformed envelope should fail at the envelope.
+- **Files:** `src/Engine/Support/ArrayReader.php`, `docs/engine/ast.md`; tests in
+  `tests/Unit/Engine/Support/ArrayReaderTest.php`, `tests/Unit/Engine/State/GameStateTest.php`.
+- **Tests added:** two. At the reader: both methods refusing a non-empty list with the path,
+  the key and both type names; both still accepting `[]`; and a map whose only key is `"10"`
+  staying a map (PHP calls a list only what starts at zero and runs consecutively). At the
+  envelope: `vars`, `inventory` and `visited` each refused as a list, and the empty envelope
+  still round-tripping.
+- **Checks:** cs-check 0 of 87 · phpstan `[OK] No errors` · deptrac `Violations 0 /
+  Uncovered 0` · test `OK (565 tests, 12200 assertions)`.
+- **Commit:** `fix(engine): reject a positional list where the format requires a map`

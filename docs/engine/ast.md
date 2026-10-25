@@ -487,8 +487,13 @@ order exist once.
   notion of "default" in the Engine (the schema, consulted at read time), so
   no default is seeded into a fresh state, and the starting scene is not
   marked visited until it is actually transitioned to.
+- `vars`, `inventory` and `visited` must be **maps**: a non-empty JSON array
+  (`"vars": [1, 2]`) is rejected with `MalformedNodeException`
+  (`must be of type map, got list`) rather than read as variables named `0`
+  and `1`.
 - An empty map serializes as `[]`, not `{}`, because PHP has one array type
-  for both. The Engine's own round-trip (`toArray()` → `json_encode` →
+  for both — which is why the shape check above exempts the empty array, and
+  why a state with no variables still loads. The Engine's own round-trip (`toArray()` → `json_encode` →
   `json_decode` → `fromArray()`) is exact regardless; a consumer reading the
   JSON directly (e.g. a `jsonb` column) should not be surprised by `"vars":
   []` on a state with no variables set.

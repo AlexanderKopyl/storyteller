@@ -246,6 +246,42 @@ final class ArrayReaderTest extends TestCase
         );
     }
 
+    /**
+     * m5: unlike `requireArrayList`/`requireStringList`, neither map reader
+     * checked its shape, so `{"vars": [1, 2]}` was read as two variables named
+     * `0` and `1` — a JSON array silently becoming a map, which then failed far
+     * away from the envelope that contained it, if at all.
+     *
+     * The empty case has to keep passing in both directions: PHP has one array
+     * type, so an empty map and an empty list are the same `[]` and
+     * `json_encode` writes a map with nothing in it as `[]`. A state with no
+     * variables must still load.
+     */
+    public function testTheMapReadersRejectANonEmptyListButStillAcceptAnEmptyOne(): void
+    {
+        self::assertMalformed(
+            static fn (): array => self::reader(['visited' => [1, 2]], 'state')->requireIntMap('visited'),
+            'state',
+            'visited',
+            'map',
+            'list',
+        );
+        self::assertMalformed(
+            static fn (): array => self::reader(['vars' => ['ash', 'elder']], 'state')->requireScalarMap('vars'),
+            'state',
+            'vars',
+            'map',
+            'list',
+        );
+
+        self::assertSame([], self::reader(['visited' => []], 'state')->requireIntMap('visited'));
+        self::assertSame([], self::reader(['vars' => []], 'state')->requireScalarMap('vars'));
+
+        // A map whose keys happen to be decimal integers is not a list unless
+        // they start at zero and run consecutively — `{"10": 2}` stays a map.
+        self::assertSame(['10' => 2], self::reader(['visited' => ['10' => 2]], 'state')->requireIntMap('visited'));
+    }
+
     public function testHasReportsAPresentNonNullKey(): void
     {
         $reader = self::reader(['a' => 0, 'b' => null]);
