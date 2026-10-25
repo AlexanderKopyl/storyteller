@@ -26,14 +26,27 @@ done.
   authored content (e.g. `"flagg"` instead of `"flag"`) throws
   `MalformedNodeException` at compile time rather than silently doing nothing
   at play time.
-- **An explicit `null` is not the same as an omitted key.** For a choice's
-  `condition` and a `next` rule's `if`, *omitting* the key means "no guard"
-  (an always-available choice, an unconditional fallback), while
-  `"condition": null` or `"if": null` is **rejected** with
+- **An explicit `null` is not the same as an omitted key.** Every optional key
+  whose absence carries meaning rejects an explicit `null` with
   `MalformedNodeException` — `key "condition" must be of type object, got
   null`. In YAML a `condition:` line with nothing after it is exactly `null`,
-  and silently reading it as "no guard" would delete an authored gate rather
-  than report an authoring error. Use the absent key to mean absent.
+  and silently reading it as the default would delete an authored gate, or
+  weaken one, rather than report an authoring error. Use the absent key to
+  mean absent. The five keys and what *omitting* each one means:
+
+  | Key | Node | Omitted means | `null` means |
+  |-----|------|---------------|--------------|
+  | `condition` | choice | no guard, always available | rejected, `object` |
+  | `if` | `next` rule | unconditional fallback | rejected, `object` |
+  | `qty` | `has_item` | one of them | rejected, `int` |
+  | `qty` | `give_item` / `remove_item` | one of them | rejected, `int` |
+  | `times` | `visited` | at least once | rejected, `int` |
+  | `next` | scene | a dead end (terminal scene) | rejected, `string or list` |
+
+  `qty` and `times` matter most: read as a default, `"qty": null` turns "the
+  vault needs 5 ropes" into "the vault needs 1 rope" with no error anywhere.
+  `next: null` would otherwise surface as `NoNextSceneException` when a player
+  walks into the scene — loud, but at play time where parse time was available.
 - **Structural validation happens at parse time; type validation happens at
   evaluation time.** `fromArray()` only checks shape: which keys are present,
   that `qty` / `times` is a positive int, that `value` is a scalar (or a JSON

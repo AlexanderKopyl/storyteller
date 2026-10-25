@@ -35,6 +35,7 @@ final readonly class ItemEffect extends Effect
     protected static function parse(ArrayReader $reader, EffectOp $op): self
     {
         $reader->rejectUnknownKeys('op', 'item', 'qty');
+        $reader->rejectNull('qty', 'int');
 
         return new self($op, $reader->requireString('item'), $reader->optionalPositiveInt('qty', 1));
     }

@@ -137,6 +137,24 @@ final class EffectTest extends TestCase
     }
 
     /**
+     * M3, the item-effect half: an **omitted** `qty` grants or takes one, an
+     * **explicit null** is malformed content. Reading the second as the first
+     * would hand the player one rope where the author wrote five, silently.
+     */
+    public function testAnOmittedQtyDefaultsToOneButAnExplicitNullIsRejected(): void
+    {
+        $omitted = Effect::fromArray(['op' => 'give_item', 'item' => 'rope']);
+
+        self::assertInstanceOf(ItemEffect::class, $omitted);
+        self::assertSame(1, $omitted->qty);
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('effect: key "qty" must be of type int, got null.');
+
+        Effect::fromArray(['op' => 'give_item', 'item' => 'rope', 'qty' => null]);
+    }
+
+    /**
      * @param array<array-key, mixed> $node
      */
     #[DataProvider('badQuantityProvider')]

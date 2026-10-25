@@ -36,6 +36,7 @@ final readonly class Visited extends Condition
     protected static function parse(ArrayReader $reader, ConditionOp $op, string $path): self
     {
         $reader->rejectUnknownKeys('op', 'scene', 'times');
+        $reader->rejectNull('times', 'int');
 
         return new self($reader->requireString('scene'), $reader->optionalPositiveInt('times', 1));
     }

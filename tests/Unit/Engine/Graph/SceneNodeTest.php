@@ -62,6 +62,24 @@ final class SceneNodeTest extends TestCase
         ));
     }
 
+    /**
+     * M3, the `next` half: an **omitted** `next` is an authored dead end — a
+     * terminal scene — while an **explicit null** is malformed content. Read
+     * as the default it still fails, but as `NoNextSceneException` when a
+     * player walks into the scene, where a parse-time error was available.
+     */
+    public function testAnOmittedNextIsADeadEndButAnExplicitNullIsRejected(): void
+    {
+        $omitted = SceneNode::fromArray(['key' => 'the_end']);
+
+        self::assertSame([], $omitted->next);
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('scene: key "next" must be of type string or list, got null.');
+
+        SceneNode::fromArray(['key' => 'the_end', 'next' => null]);
+    }
+
     public function testChoiceThrowsForAnAbsentKey(): void
     {
         $scene = SceneNode::fromArray(self::documentedScene());

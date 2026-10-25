@@ -31,6 +31,7 @@ final readonly class HasItem extends Condition
     protected static function parse(ArrayReader $reader, ConditionOp $op, string $path): self
     {
         $reader->rejectUnknownKeys('op', 'item', 'qty');
+        $reader->rejectNull('qty', 'int');
 
         return new self($reader->requireString('item'), $reader->optionalPositiveInt('qty', 1));
     }

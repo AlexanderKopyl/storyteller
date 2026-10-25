@@ -102,6 +102,43 @@ final class ConditionTest extends TestCase
     }
 
     /**
+     * M3, the `qty` half: an **omitted** `qty` means "one of them", but an
+     * **explicit null** is malformed content, and reading it as the default
+     * turns "the vault needs 5 ropes" into "the vault needs 1 rope" without a
+     * word — the same silent weakening of an authored gate M3 was about, one
+     * level down from `condition`.
+     */
+    public function testAnOmittedQtyDefaultsToOneButAnExplicitNullIsRejected(): void
+    {
+        $omitted = Condition::fromArray(['op' => 'has_item', 'item' => 'rope']);
+
+        self::assertInstanceOf(HasItem::class, $omitted);
+        self::assertSame(1, $omitted->qty);
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('condition: key "qty" must be of type int, got null.');
+
+        Condition::fromArray(['op' => 'has_item', 'item' => 'rope', 'qty' => null]);
+    }
+
+    /**
+     * M3, the `times` half: an **omitted** `times` means "at least once", an
+     * explicit null is malformed and must not be read as that default.
+     */
+    public function testAnOmittedTimesDefaultsToOneButAnExplicitNullIsRejected(): void
+    {
+        $omitted = Condition::fromArray(['op' => 'visited', 'scene' => 'cave']);
+
+        self::assertInstanceOf(Visited::class, $omitted);
+        self::assertSame(1, $omitted->times);
+
+        $this->expectException(MalformedNodeException::class);
+        $this->expectExceptionMessage('condition: key "times" must be of type int, got null.');
+
+        Condition::fromArray(['op' => 'visited', 'scene' => 'cave', 'times' => null]);
+    }
+
+    /**
      * @param array<array-key, mixed> $node
      */
     #[DataProvider('badQuantityProvider')]

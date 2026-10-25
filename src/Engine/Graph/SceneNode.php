@@ -121,6 +121,8 @@ final readonly class SceneNode
      */
     private static function parseNext(ArrayReader $reader, string $path): string|array
     {
+        $reader->rejectNull('next', 'string or list');
+
         if (!$reader->has('next')) {
             return [];
         }

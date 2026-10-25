@@ -698,10 +698,11 @@ the failing test and its exact failure message are recorded below before each fi
   absent key and a non-null value both stay silent.
 - **Checks:** cs-fix 0/84 · phpstan `[OK] No errors` · deptrac 0 violations · test
   473 passed / 7617 assertions · coverage `Lines 100.00% (644/644)`.
-- **Deviation (M3-a).** Scoped to `condition` and `if`, the two keys the orchestrator named.
-  The review additionally suggested `next`, `qty` and `times` ("`qty: null` becomes `qty = 1`,
-  `next: null` becomes a dead end"). Those are real but were not in this loop's instruction,
-  and `rejectNull()` is now the primitive they need — one call each. Left for the next loop.
+- **Deviation (M3-a) — recorded wrongly here; corrected in the r4 entry below.** This entry
+  originally described `next`, `qty` and `times` as an *additional* suggestion beyond the
+  finding. That was wrong. M3 as reported named five keys — "`condition`, `if`, `next`, `qty`
+  and `times`. Tests: one per key." — so all five were in scope and three were missed. The
+  deviation was **partial delivery of M3**, not a declined extra. Closed by r4 below.
 
 ### M5 — the two `ChoiceUnavailableException` cases are distinguishable by type
 
@@ -733,6 +734,60 @@ the failing test and its exact failure message are recorded below before each fi
 - **Checks:** cs-fix 0/85 · phpstan `[OK] No errors` · deptrac 0 violations · test
   476 passed / 7675 assertions · coverage `Lines 100.00% (651/651)`.
 - **Deviations:** none.
+
+## Gate C fix loop 2 (re-review `04-review.md` → `## Re-review — Gate C fix loop 1`)
+
+Scope as given: **r4 only** — the unfixed remainder of M3. r3 / B1-b
+(`VariableSchema::assertState()` at the load boundary) goes to the user as an open item for
+`Play`; r1, r2, M1, M4 and M6 are untouched. `Transition`'s public signature is unchanged.
+
+| Finding | Status | Commit |
+|---------|--------|--------|
+| r4 (= M3-a) — `qty`, `times`, `next` read an explicit null as a default | done | `fix(engine): r4 reject an explicit null qty, times and next` (this commit) |
+
+### r4 — the remaining three keys of M3 reject an explicit `null`
+
+- **Framing.** This is **completing M3, not new scope.** M3 as reported named five keys;
+  `633c1e3` closed two. The loop-1 note recording the other three as an additional
+  suggestion was wrong and has been corrected in place under *M3 → Deviation (M3-a)*.
+- **Failing tests first.** Four new cases, all red with the identical message — which is
+  itself the finding, since a silent default throws nothing at all:
+
+  ```
+  ConditionTest::testAnOmittedQtyDefaultsToOneButAnExplicitNullIsRejected
+  ConditionTest::testAnOmittedTimesDefaultsToOneButAnExplicitNullIsRejected
+  EffectTest::testAnOmittedQtyDefaultsToOneButAnExplicitNullIsRejected
+  SceneNodeTest::testAnOmittedNextIsADeadEndButAnExplicitNullIsRejected
+    => Failed asserting that exception of type
+       "Storyteller\Engine\Exception\MalformedNodeException" is thrown.
+  ```
+
+- **Changed.** One `ArrayReader::rejectNull()` call per site, no new primitive:
+  `HasItem::parse()` `('qty', 'int')` and `Visited::parse()` `('times', 'int')` and
+  `ItemEffect::parse()` `('qty', 'int')`, each immediately after `rejectUnknownKeys()`;
+  `SceneNode::parseNext()` `('next', 'string or list')` **before** the `has('next')` early
+  return, since `has()` is `isset()` and cannot tell absent from null — that ordering is the
+  whole fix at that site.
+- **Files:** `src/Engine/Ast/HasItem.php`, `src/Engine/Ast/Visited.php`,
+  `src/Engine/Ast/ItemEffect.php`, `src/Engine/Graph/SceneNode.php`, `docs/engine/ast.md`;
+  tests in `tests/Unit/Engine/Ast/ConditionTest.php`, `tests/Unit/Engine/Ast/EffectTest.php`,
+  `tests/Unit/Engine/Graph/SceneNodeTest.php`.
+- **Tests added:** four, each asserting **both** readings in one test, as the `condition` and
+  `if` tests do — the omitted key still yields the default (`qty` 1, `times` 1, `next` `[]` for
+  a terminal scene), the explicit null is rejected with the exact message
+  (`condition: key "qty" must be of type int, got null.`,
+  `condition: key "times" must be of type int, got null.`,
+  `effect: key "qty" must be of type int, got null.`,
+  `scene: key "next" must be of type string or list, got null.`). The pre-existing
+  `testQtyAndTimesDefaultToOne` and `testOptionalKeysDefaultToEmpty` remain green, which is the
+  independent evidence that the omitted-key path was not disturbed.
+- **Docs.** `docs/engine/ast.md`'s explicit-null bullet covered only `condition` and `if`; it
+  now carries a six-row table of every optional key, what *omitting* it means and the type it
+  reports on null, plus why `qty`/`times` are the damaging ones and `next` the mild one.
+- **Checks:** cs-fix 0/85 · phpstan `[OK] No errors` · deptrac 0 violations · test
+  480 passed / 7690 assertions · coverage `Lines 100.00% (655/655)`.
+- **Deviations:** none. Nothing outside r4 was touched; `rejectNull()`, `has()` and
+  `optionalPositiveInt()` are unchanged.
 
 ## Deviations from the plan
 
@@ -803,28 +858,30 @@ the failing test and its exact failure message are recorded below before each fi
     variable's declared type. Normalisation is therefore applied at every schema-aware
     boundary instead, which holds the property the instruction protects. Full reasoning and
     the residual gap are under *Gate C fix loop 1 → B1*.
-15. **Gate C fix loop 1 — two suggestions deliberately not taken.** The review's B1 also
-    proposed validating the *resolved* value inside `ConditionEvaluator::compare()` (B1-b),
-    and its M3 also proposed rejecting an explicit null for `next`, `qty` and `times` (M3-a).
-    Both are out of this loop's stated scope, both change behaviour for reasons unrelated to
-    the finding as scoped, and both are recorded above so the next loop can pick them up.
-    `rejectNull()` is already the primitive M3-a needs.
+15. **Gate C fix loop 1 — one suggestion deliberately not taken, one finding under-delivered.**
+    The review's B1 also proposed validating the *resolved* value inside
+    `ConditionEvaluator::compare()` (B1-b) — out of that loop's stated scope, deliberately
+    declined, still open as r3. M3-a was **not** the same kind of thing: rejecting an explicit
+    null for `next`, `qty` and `times` was part of M3 as reported, so loop 1 delivered three
+    fifths of an accepted finding and this entry originally mis-recorded that as declining an
+    extra. Closed in loop 2 as r4.
 
-## Final check state (after Gate C fix loop 1)
+## Final check state (after Gate C fix loop 2)
 
 ```
 composer cs-check -> exit 0 (Found 0 of 85 files that can be fixed)
 composer phpstan  -> exit 0 ([OK] No errors; level 8 over src, tests, config, public)
 composer deptrac  -> exit 0 (Violations 0 / Skipped violations 0 / Uncovered 0 / Allowed 0 /
                      Warnings 0 / Errors 0)
-composer test     -> exit 0 (OK, 476 tests, 7675 assertions)
+composer test     -> exit 0 (OK, 480 tests, 7690 assertions)
 composer coverage -> exit 0 — src/Engine: Classes 100.00% (44/44), Methods 100.00% (189/189),
-                     Lines 100.00% (651/651)
+                     Lines 100.00% (655/655)
 ```
 
-Previous state, after step 15 / before the fix loop, for comparison: 84 files, 451 tests,
-7566 assertions, 185 methods, 630 lines — all four checks already green. The fix loop added
-25 tests, 109 assertions, 4 methods and 21 lines, and left every figure at 100.00 %.
+Previous state, after step 15 / before the fix loops, for comparison: 84 files, 451 tests,
+7566 assertions, 185 methods, 630 lines — all four checks already green. Loop 1 added 25
+tests, 109 assertions, 4 methods and 21 lines; loop 2 added 4 tests, 15 assertions, 0 methods
+and 4 lines (one `rejectNull()` call per site). Every figure is still 100.00 %.
 
 Integrity checks, all clean: `phpstan-baseline.neon` absent · `grep -rn phpstan-ignore src
 tests` → 0 · no `Symfony|Doctrine|Psr|Monolog|PHPUnit` import in `src/Engine` → 0 · no
@@ -841,10 +898,11 @@ now machine-held by `EnginePurityTest` rather than re-run by hand. `git diff --s
   a story's first scene) and M4 (no scene/choice/phase context on evaluation-time errors) are
   open items for the user; M6 (the golden-value RNG test) is assigned to the tester. All five
   minors are untouched. `Transition`'s public signature is unchanged.
-- **Carried forward from the fix loop:** B1-b (validate the resolved value in
-  `ConditionEvaluator::compare()`, so a type-disagreeing state does not silently evaluate
-  `false` in the evaluator while the applier throws) and M3-a (`rejectNull()` for `next`,
-  `qty` and `times`). Both are one-line changes on top of what landed.
+- **Carried forward from the fix loops:** only r3 / B1-b — a type-disagreeing loaded state
+  silently evaluates `false` (or `true`) in `ConditionEvaluator::compare()` while the applier
+  throws. The re-review's preferred shape is `VariableSchema::assertState(GameState $state)`
+  called once at the load boundary, which is `Play`'s work, not the Engine's; it is an open
+  item for the user and was explicitly out of loop 2's scope. M3-a is **closed** as r4.
 - **`Allowed 0` is expected, not a failure** (deviation 6). If AC-4 is to stay machine-checked,
   the checkable property is the analysed-file count (1 before step 2, 78 after step 13) or the
   absence of an `Engine -> Shared` entry, not the `Allowed` figure. The step-13 probe is the
