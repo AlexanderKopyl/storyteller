@@ -23,7 +23,7 @@
 | 13. `Transition` + `TransitionResult` | done | `feat(engine): add Transition with redirect-budget and visit semantics` (8333176) |
 | 14. Determinism and purity guards | done | `test(engine): pin determinism and the purity invariants` (8f1a8db) |
 | 15. `Rng` + `SeededRng` | done | `feat(engine): add the seeded RNG forward contract (unused by design)` (6eb4724) · `Engine: drop the literal Secure engine name from the RNG docblock` (fb22e74) |
-| 16. `docs/engine/ast.md` | not started — separate agent | — |
+| 16. `docs/engine/ast.md` | done | `docs(engine): add the AST specification` (pending) |
 
 ## Step log
 
@@ -533,6 +533,45 @@ Two commits, because they are two logical changes.
   under `src/Engine`. A pinned golden value would be the only thing that would also catch a
   future PHP changing `Xoshiro256StarStar`'s output. Flagged for the reviewer rather than added.
 
+### Step 16 — `docs/engine/ast.md`
+
+- **Written:** `docs/engine/ast.md` only. No file under `src/` or `tests/` touched; no
+  dependency added. Verified every JSON example against the committed parser by running a
+  small throwaway script (not committed) inside the `php` container that round-trips all 13
+  condition shapes, all 8 effect shapes, the scene/choice/`next` example, the `GameState`
+  example, the `VariableSchema` example and a `StateDiff::between()` call, asserting each
+  `toArray()` equals the literal JSON the document shows — including the `StateDiff` example,
+  which is not a mechanical round trip but a real `between()` computation. All passed
+  (`ALL OK`).
+- **Content:** conventions (snake_case, unknown-key rejection, parse-time vs evaluation-time
+  validation, the schema-default rule, "the Engine trusts its inputs"); all 13 condition
+  operators and all 8 effect operators with shape, required/optional keys, defaults and a
+  verified example each; a cross-cutting rules section restating the missing-variable,
+  `remove_item`-floor and `goto`-is-state-inert rules; a dedicated `visited` section that
+  documents D-VISIT's after-`on_enter` increment **in terms of choice conditions and `next`
+  guards, not `on_enter`**, explicitly stating that branching inside `on_enter` on its own
+  scene's visit count is not expressible (per the step-13 deviation) and walking the verified
+  three-turn example from `TransitionTest::testASceneIsNotVisitedUntilAfterItsOwnOnEnter`; the
+  redirect budget section stating the choice-effect `goto` spends the first of five, the guard
+  fires after every increment, and there is no cycle detection; the `GameState` envelope, the
+  `VariableSchema` shape, the `StateDiff` shape and its D-DIFF omission rules; the event order
+  and `TransitionResult` shape; an error-behaviour table naming every exception class under
+  `src/Engine/Exception/` and when each fires, built directly from those nine source files
+  rather than from the plan's prose; and a closing note that `Rng`/`SeededRng` exist as an
+  unused forward contract, per the plan's instruction to say so.
+- **Checks:** `composer qa` inside the `php` container — exit 0 (cs-fix 0/84 fixable,
+  phpstan `[OK] No errors`, deptrac 0/0/0/0/0/0, test 451 passed / 7566 assertions). No test
+  count changed, since this step adds no test.
+- **Commit:** `docs(engine): add the AST specification`
+- **Deviations:** none. Every shape transcribed was already frozen in the plan's *Public
+  interfaces* and *JSON AST node shapes* sections and matches the committed code read directly
+  from `src/Engine/Ast/`, `src/Engine/State/`, `src/Engine/Exception/`, `src/Engine/Event/`,
+  `src/Engine/Transition.php`, `src/Engine/ConditionEvaluator.php` and
+  `src/Engine/EffectApplier.php`. The one place the plan's own prose and the code disagree —
+  the planned `visited`-inside-`on_enter` test case being inexpressible (step-13 deviation 10)
+  — is documented as the code's actual behaviour, per this step's explicit instruction, rather
+  than by repeating the plan's original framing.
+
 ## Deviations from the plan
 
 1. **Step 1 — none.** (Unchanged from the original entry: both edge cases the plan anticipated
@@ -624,9 +663,9 @@ now machine-held by `EnginePurityTest` rather than re-run by hand. `git diff --s
   absence of an `Engine -> Shared` entry, not the `Allowed` figure. The step-13 probe is the
   positive evidence that the gate bites: a Symfony import in `src/Engine` produced
   `Violations 1` **and** a `BoundedContextLayoutTest` failure.
-- **Step 16 is the only one left**: `docs/engine/ast.md`, a separate agent. The AST spec must
-  document the `visited` operator in terms of choice conditions and `next` guards, not
-  `on_enter` — see deviation 10 — and should state that `Rng` exists but no operator uses it.
+- **Step 16 is done**: `docs/engine/ast.md` documents the `visited` operator in terms of
+  choice conditions and `next` guards, not `on_enter` — see deviation 10 — and states that
+  `Rng` exists but no operator uses it. All sixteen plan steps are now complete.
 - **The RNG has no golden-value test** (step 15, by plan instruction). Within-process purity is
   proven; cross-version reproducibility of `Xoshiro256StarStar` is not. If that matters, one
   pinned value is the cheapest way to hold it.
