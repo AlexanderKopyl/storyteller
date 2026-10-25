@@ -38,6 +38,84 @@ deptrac:
         - type: directory
           value: src/Api/.*
 
+    # N1: require-dev packages. Granted to NO layer, so any import of one from src/ is a
+    # violation. Without it the Framework layer below - "not ours, not a built-in" -
+    # affirmatively allows `use PHPUnit\Framework\Assert;` inside Content/Play/Api, which
+    # is green here and fatal under `composer install --no-dev`.
+    #
+    # WHY NOT a `composer` collector, which is what review N1 proposed: it cannot work.
+    # ComposerFilesParser resolves a package to its psr-0/psr-4 autoload keys only, and
+    # the packages that matter most declare none - phpunit/phpunit, every sebastian/*,
+    # phpstan/phpstan, theseer/tokenizer, phar-io/* and jetbrains/phpstorm-stubs all
+    # autoload by `classmap` or `files`. A `composer` collector naming phpunit/phpunit
+    # therefore matches nothing at all. (It does read dev requirements: the parser merges
+    # composer.lock's `packages-dev` into its package map and passes includeDev=true,
+    # hard-coded, in deptrac 4.7.2 - there is no YAML option. That half works; the
+    # namespace half does not.) Namespace prefixes are the only mechanism that covers a
+    # classmap-autoloaded package, so that is what this layer uses.
+    #
+    # HOW FAR IT REACHES - deliberate: the full transitive dev-only closure, i.e. every
+    # package in composer.lock's `packages-dev` (51 of them), not just the six named in
+    # `require-dev`. Six would leave sebastian/*, myclabs/deep-copy, nikic/php-parser and
+    # theseer/tokenizer inside Framework, so `use SebastianBergmann\Diff\Differ;` in
+    # src/Api would still pass - verified before this layer existed: Allowed 2, exit 0.
+    # The closure is exact, because composer puts a package in `packages-dev` only when
+    # nothing in `require` reaches it; a package needed by both lives in `packages`.
+    #
+    # Cost, stated plainly: unlike Framework below, this list is NOT exhaustive by
+    # construction and will go stale when a dev dependency is added, removed or upgraded
+    # into a new namespace. That cost is paid by
+    # tests/Unit/Shared/DevPackageIsolationTest.php, which recomputes the dev-only
+    # namespace set from composer.lock plus the generated autoload maps and fails when
+    # this list no longer covers it, or when it starts covering a production package.
+    # Staleness is therefore loud, not silent - which is the property the Framework
+    # comment below says a package list must have before it is acceptable.
+    - name: Dev
+      collectors:
+        - type: classLike
+          value: '^Clue\\'                     # clue/ndjson-react
+        - type: classLike
+          value: '^Composer\\Pcre\\'           # composer/pcre
+        - type: classLike
+          value: '^Composer\\Semver\\'         # composer/semver
+        - type: classLike
+          value: '^Composer\\XdebugHandler\\'  # composer/xdebug-handler
+        - type: classLike
+          value: '^DeepCopy\\'                 # myclabs/deep-copy
+        - type: classLike
+          value: '^Deptrac\\'                  # deptrac/deptrac
+        - type: classLike
+          value: '^Ergebnis\\'                 # ergebnis/agent-detector
+        - type: classLike
+          value: '^Evenement\\'                # evenement/evenement
+        - type: classLike
+          value: '^Fidry\\'                    # fidry/cpu-core-counter
+        - type: classLike
+          value: '^PHPStan\\'                  # phpstan/phpstan{,-doctrine,-symfony}, phpstan/phpdoc-parser
+        - type: classLike
+          value: '^PHPUnit\\'                  # phpunit/phpunit (classmap - unreachable via `composer` collector)
+        - type: classLike
+          value: '^PharIo\\'                   # phar-io/manifest, phar-io/version
+        - type: classLike
+          value: '^PhpCsFixer\\'               # friendsofphp/php-cs-fixer
+        - type: classLike
+          value: '^PhpParser\\'                # nikic/php-parser
+        - type: classLike
+          value: '^React\\'                    # react/* (7 packages, pulled in by php-cs-fixer)
+        - type: classLike
+          value: '^SebastianBergmann\\'        # sebastian/* (14 packages, pulled in by phpunit)
+        - type: classLike
+          # symfony/polyfill-php80, -php81: dev-only in this lock. The digits are
+          # enumerated, not globbed: symfony/polyfill-php86 is a *production* package
+          # here, and `Php8` alone banned it. Caught by DevPackageIsolationTest.
+          value: '^Symfony\\Polyfill\\Php8[01]\\'
+        - type: classLike
+          value: '^TheSeer\\'                  # theseer/tokenizer
+        - type: classLike
+          value: '^phpDocumentor\\'            # phpdocumentor/{graphviz,reflection-common,type-resolver}
+        - type: classLike
+          value: '^staabm\\'                   # staabm/side-effects-detector
+
     # D4: vendor layer. Without it, `use Doctrine\ORM\EntityManagerInterface;` inside
     # src/Engine belongs to no layer and deptrac passes silently.
     #
@@ -57,7 +135,8 @@ deptrac:
     # another, so a future narrow grant (e.g. letting Shared use symfony/uid alone - see
     # review m2) needs its own layer with a `composer` collector PLUS a matching
     # `must_not` entry here, so the two layers stay disjoint. That is a deliberate,
-    # reviewed change, which is precisely what plan decision P3 asks for.
+    # reviewed change, which is precisely what plan decision P3 asks for - and which the
+    # Dev layer above is the first instance of.
     - name: Framework
       collectors:
         - type: bool
@@ -74,6 +153,13 @@ deptrac:
             # are not "the framework"; the Engine must stay free to use them.
             - type: php_internal
               value: '.*'
+            # ... and except require-dev packages, which belong to Dev. Without this the
+            # two layers overlap and every dev token lands in both, which deptrac reports
+            # as a violation on the token itself rather than on the import that caused it.
+            # Expressed as `type: layer` rather than a copy of Dev's 20 patterns so the
+            # two cannot drift apart. No cycle: Dev never refers back to Framework.
+            - type: layer
+              value: Dev
 
   ruleset:
     # Exactly the five context edges from CLAUDE.md. Note the deliberate absence of
@@ -96,3 +182,7 @@ deptrac:
       - Shared
       - Framework
     Framework: []
+    # Granted to nobody, and granted nothing: no src/ layer may import a require-dev
+    # package. tests/ is outside `paths` (./src only), so test code using PHPUnit is
+    # unaffected and must stay that way.
+    Dev: []
