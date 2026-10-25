@@ -688,7 +688,7 @@ final class TransitionTest extends TestCase
         }
 
         try {
-            Transition::begin(InMemoryStoryGraph::fromArray($scenes), self::schema(), $this->state(), 'cave', 9);
+            $this->transition($scenes)->begin($this->state(), 'cave', 9);
             self::fail('Expected the entry to fail.');
         } catch (UnknownVariableException $exception) {
             $messages['begin'] = $exception->getMessage();
@@ -735,15 +735,9 @@ final class TransitionTest extends TestCase
      */
     public function testBeginRunsTheOpeningScenesOnEnterAndMarksItVisited(): void
     {
-        $result = Transition::begin(
-            InMemoryStoryGraph::fromArray([
-                ['key' => 'start', 'on_enter' => [['op' => 'sub', 'var' => 'hp', 'value' => 5], ['op' => 'set_flag', 'flag' => 'woke_up']]],
-            ]),
-            self::schema(),
-            $this->state(),
-            'start',
-            1,
-        );
+        $result = $this->transition([
+            ['key' => 'start', 'on_enter' => [['op' => 'sub', 'var' => 'hp', 'value' => 5], ['op' => 'set_flag', 'flag' => 'woke_up']]],
+        ])->begin($this->state(), 'start', 1);
 
         self::assertSame('start', $result->sceneKey);
         self::assertFalse($result->isEnding);
@@ -772,13 +766,7 @@ final class TransitionTest extends TestCase
      */
     public function testBeginOnASceneWithNoOnEnterStillEntersIt(): void
     {
-        $result = Transition::begin(
-            InMemoryStoryGraph::fromArray([['key' => 'start']]),
-            self::schema(),
-            $this->state(),
-            'start',
-            1,
-        );
+        $result = $this->transition([['key' => 'start']])->begin($this->state(), 'start', 1);
 
         self::assertSame(['scene_entered'], self::names($result));
         self::assertSame(['start' => 1], $result->state->toArray()['visited']);
@@ -792,16 +780,10 @@ final class TransitionTest extends TestCase
      */
     public function testBeginFollowsAGotoOutOfTheOpeningScenesOnEnter(): void
     {
-        $result = Transition::begin(
-            InMemoryStoryGraph::fromArray([
-                ['key' => 'start', 'on_enter' => [['op' => 'set_flag', 'flag' => 'passed'], ['op' => 'goto', 'scene' => 'cave']]],
-                ['key' => 'cave'],
-            ]),
-            self::schema(),
-            $this->state(),
-            'start',
-            1,
-        );
+        $result = $this->transition([
+            ['key' => 'start', 'on_enter' => [['op' => 'set_flag', 'flag' => 'passed'], ['op' => 'goto', 'scene' => 'cave']]],
+            ['key' => 'cave'],
+        ])->begin($this->state(), 'start', 1);
 
         self::assertSame('cave', $result->sceneKey);
         self::assertTrue($result->state->hasFlag('passed'));
@@ -816,13 +798,7 @@ final class TransitionTest extends TestCase
      */
     public function testBeginSpendsTheSameRedirectBudgetAsARun(): void
     {
-        $five = Transition::begin(
-            InMemoryStoryGraph::fromArray(self::redirectChain(5)),
-            self::schema(),
-            $this->state(),
-            'h0',
-            1,
-        );
+        $five = $this->transition(self::redirectChain(5))->begin($this->state(), 'h0', 1);
 
         self::assertSame('h5', $five->sceneKey);
         self::assertSame(5, self::sceneEntered($five)['redirects']);
@@ -830,13 +806,7 @@ final class TransitionTest extends TestCase
         $this->expectException(RedirectLoopException::class);
         $this->expectExceptionMessage('h6');
 
-        Transition::begin(
-            InMemoryStoryGraph::fromArray(self::redirectChain(6)),
-            self::schema(),
-            $this->state(),
-            'h0',
-            1,
-        );
+        $this->transition(self::redirectChain(6))->begin($this->state(), 'h0', 1);
     }
 
     public function testBeginThrowsForAnUnknownOpeningScene(): void
@@ -844,13 +814,7 @@ final class TransitionTest extends TestCase
         $this->expectException(UnknownSceneException::class);
         $this->expectExceptionMessage('nowhere');
 
-        Transition::begin(
-            InMemoryStoryGraph::fromArray([['key' => 'start']]),
-            self::schema(),
-            $this->state(),
-            'nowhere',
-            1,
-        );
+        $this->transition([['key' => 'start']])->begin($this->state(), 'nowhere', 1);
     }
 
     /**
@@ -859,13 +823,7 @@ final class TransitionTest extends TestCase
      */
     public function testBeginReportsAnEndingOpeningScene(): void
     {
-        $result = Transition::begin(
-            InMemoryStoryGraph::fromArray([['key' => 'the_end']], ['the_end']),
-            self::schema(),
-            $this->state(),
-            'the_end',
-            3,
-        );
+        $result = $this->transition([['key' => 'the_end']], ['the_end'])->begin($this->state(), 'the_end', 3);
 
         self::assertTrue($result->isEnding);
         self::assertSame(['scene_entered', 'ending_reached'], self::names($result));
@@ -894,13 +852,7 @@ final class TransitionTest extends TestCase
         ];
 
         $ran = $this->transition($scenes, ['the_end'])->run($this->state(), 'lobby', 'go', 4);
-        $begun = Transition::begin(
-            InMemoryStoryGraph::fromArray($scenes, ['the_end']),
-            self::schema(),
-            $this->state(),
-            'x',
-            4,
-        );
+        $begun = $this->transition($scenes, ['the_end'])->begin($this->state(), 'x', 4);
 
         self::assertSame($ran->state->toArray(), $begun->state->toArray());
         self::assertSame($ran->sceneKey, $begun->sceneKey);
@@ -913,17 +865,82 @@ final class TransitionTest extends TestCase
     }
 
     /**
+     * **Both entry points apply effects through the applier the object was
+     * built with.**
+     *
+     * `begin()` was once static and took a `VariableSchema`, out of which it
+     * built a second `EffectApplier` of its own: a caller who constructed a
+     * `Transition` with a particular applier had it honoured by `run()` and
+     * silently ignored by `begin()`. The two schemas here differ in exactly
+     * one variable, `tonic`, which makes the collaborator observable — the
+     * applier that declares it performs the write, the one that does not
+     * refuses it by name, through either entry point. If the two ever diverge
+     * in their collaborators again, this fails.
+     */
+    public function testBothEntryPointsApplyEffectsThroughTheApplierTheTransitionWasBuiltWith(): void
+    {
+        $scenes = [
+            [
+                'key' => 'lobby',
+                'choices' => [['key' => 'drink', 'effects' => [['op' => 'set', 'var' => 'tonic', 'value' => 7]]]],
+                'next' => 'cave',
+            ],
+            ['key' => 'cave', 'on_enter' => [['op' => 'add', 'var' => 'tonic', 'value' => 1]]],
+        ];
+
+        $knows = $this->transitionWith(
+            VariableSchema::of([
+                new VariableDefinition('hp', VariableType::Int, 100),
+                new VariableDefinition('tonic', VariableType::Int, 0),
+            ]),
+            $scenes,
+        );
+
+        self::assertSame(8, $knows->run($this->state(), 'lobby', 'drink', 1)->state->toArray()['vars']['tonic']);
+        self::assertSame(1, $knows->begin($this->state(), 'cave', 1)->state->toArray()['vars']['tonic']);
+
+        // The same graph through a `Transition` built with an applier that
+        // does not declare `tonic`: both entry points refuse it. That is what
+        // makes the two assertions above statements about the injected
+        // applier, and not about a schema either entry point found elsewhere.
+        $ignorant = $this->transition($scenes);
+
+        $entries = [
+            'run' => static fn (): TransitionResult => $ignorant->run(GameState::create([], [], [], [], []), 'lobby', 'drink', 1),
+            'begin' => static fn (): TransitionResult => $ignorant->begin(GameState::create([], [], [], [], []), 'cave', 1),
+        ];
+
+        foreach ($entries as $entry => $call) {
+            try {
+                $call();
+                self::fail(sprintf('Expected %s() to refuse the undeclared variable.', $entry));
+            } catch (UnknownVariableException $exception) {
+                self::assertStringStartsWith('Unknown variable "tonic".', $exception->getMessage());
+            }
+        }
+    }
+
+    /**
      * @param  list<array<array-key, mixed>> $scenes
      * @param  list<string>                  $endings
      */
     private function transition(array $scenes, array $endings = []): Transition
     {
-        $evaluator = new ConditionEvaluator(self::schema());
+        return $this->transitionWith(self::schema(), $scenes, $endings);
+    }
+
+    /**
+     * @param  list<array<array-key, mixed>> $scenes
+     * @param  list<string>                  $endings
+     */
+    private function transitionWith(VariableSchema $schema, array $scenes, array $endings = []): Transition
+    {
+        $evaluator = new ConditionEvaluator($schema);
 
         return new Transition(
             InMemoryStoryGraph::fromArray($scenes, $endings),
             $evaluator,
-            new EffectApplier(self::schema()),
+            new EffectApplier($schema),
             new NextSceneResolver($evaluator),
         );
     }

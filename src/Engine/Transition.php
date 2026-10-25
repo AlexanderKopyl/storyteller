@@ -17,7 +17,6 @@ use Storyteller\Engine\Exception\RedirectLoopException;
 use Storyteller\Engine\Exception\UnknownSceneException;
 use Storyteller\Engine\Graph\StoryGraph;
 use Storyteller\Engine\State\GameState;
-use Storyteller\Engine\State\VariableSchema;
 
 /**
  * One turn: a player at a scene picks a choice, and this is everything that
@@ -127,10 +126,14 @@ final readonly class Transition
      * it stays in one place: `begin()` and `run()` call the same private
      * {@see self::enter()}, so the two cannot drift apart.
      *
-     * Static because a story that has not begun has no turn machinery yet —
-     * there is no choice to evaluate and no `next` to resolve, so neither a
-     * `ConditionEvaluator` nor a `NextSceneResolver` takes any part. The graph
-     * and the schema are all it needs.
+     * An instance method, symmetric with `run()`, and taking no graph and no
+     * schema: the object already holds both. An entry needs less machinery
+     * than a turn — no choice is evaluated and no `next` is resolved, so
+     * neither the `ConditionEvaluator` nor the `NextSceneResolver` takes any
+     * part — but needing less of a collaborator is not a reason to accept a
+     * different one. A caller who builds a `Transition` with a particular
+     * `EffectApplier` must have it honoured by both entry points, or the two
+     * can apply the same `on_enter` under two different schemas.
      *
      * The budget is the same five, spent the same way by a `goto` in the
      * opening scene's `on_enter`, and refused with the same
@@ -141,14 +144,9 @@ final readonly class Transition
      * @throws UnknownSceneException if the scene, or any scene reached from it, is unknown
      * @throws RedirectLoopException if the entry spent more than MAX_REDIRECTS redirects
      */
-    public static function begin(
-        StoryGraph $graph,
-        VariableSchema $schema,
-        GameState $state,
-        string $sceneKey,
-        int $turn,
-    ): TransitionResult {
-        return self::enter($graph, new EffectApplier($schema), $state, $sceneKey, $turn, 0, []);
+    public function begin(GameState $state, string $sceneKey, int $turn): TransitionResult
+    {
+        return self::enter($this->graph, $this->applier, $state, $sceneKey, $turn, 0, []);
     }
 
     /**

@@ -1020,6 +1020,9 @@ red message recorded for each, `cs-fix` + `phpstan` after each.
 - **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
   deptrac `Violations 0 / Uncovered 0` · test `OK (553 tests, 7976 assertions)`.
 - **Commit:** `feat(engine): add an entry point for a story's first scene`
+- **Superseded.** The static signature recorded below was corrected in the API-correction
+  loop at the end of this document: `begin()` is now an instance method
+  `begin(GameState, string, int)`.
 - **Deviation — the signature is the user's, the staticness is its consequence.** The review
   (M1) proposed an instance method `Transition::enter(GameState, string, int)`; the
   instruction specifies `begin(StoryGraph $graph, VariableSchema $schema, GameState $state,
@@ -1270,6 +1273,8 @@ One used, one removed, seven justified in a line each at their declaration.
    staticness follows from the signature rather than being a choice of mine: a method that
    takes a graph on an object that already holds one leaves two graphs in scope with no rule
    about which wins. Recorded because the shape is the user's, not the reviewer's.
+   **Superseded by the API-correction loop below**: the orchestrator withdrew the static
+   signature, and `begin()` is now the instance method the review's M1 asked for.
 2. **The five minors are five commits, not one** (F5–F9). The instruction says one commit per
    numbered item and groups the minors as item 5; CLAUDE.md rule 7 says one logical change
    per commit. A message reword, a purity-scan extension, a validation gap, a docblock and an
@@ -1327,3 +1332,86 @@ identity and I/O as well as for randomness and the clock.
 - **The `on_enter` error context carries no `choice`.** If an operator later wants "which
   choice led into this scene", that is a `Play`-level correlation — the turn's `ChoiceMade`
   event already carries it — not something the Engine should invent.
+
+## API-correction loop — `begin()` becomes an instance method (2026-10-25)
+
+One change, started at `3084073`. The orchestrator withdrew the static `begin()` signature it
+had specified in F2 and replaced it with the instance method the review's M1 originally
+proposed. **The record of why it changed matters more than the fact that it did**, so it is
+written out here rather than folded silently into F2.
+
+### C1 — `Transition::begin(GameState, string, int)`
+
+- **Red first.** One new case in `tests/Unit/Engine/TransitionTest.php`,
+  `testBothEntryPointsApplyEffectsThroughTheApplierTheTransitionWasBuiltWith`:
+
+  ```
+  TypeError: Storyteller\Engine\Transition::begin(): Argument #1 ($graph) must be of type
+  Storyteller\Engine\Graph\StoryGraph, Storyteller\Engine\State\GameState given
+  ```
+
+- **Why it changed — the defect the old shape carried.** One class had two public entry
+  points with two call styles and two sets of collaborators. `run()` was an instance method
+  using the injected `$graph`, `$evaluator`, `$applier` and `$resolver`; `begin()` was static,
+  took a `StoryGraph` and a `VariableSchema`, and **constructed a second `EffectApplier`** out
+  of that schema. A caller who built a `Transition` with a particular applier therefore had it
+  honoured by `run()` and silently ignored by `begin()` — the same `on_enter` could be applied
+  under two different schemas, with no diagnostic. The F2 reasoning for avoiding an instance
+  method (a graph parameter on an object that already holds a graph leaves two graphs in scope
+  with no rule about which wins) was sound; the conclusion drawn from it was not. The right
+  move was to **drop the parameters, not the instance**.
+- **Changed.** `public static function begin(StoryGraph, VariableSchema, GameState, string,
+  int)` → `public function begin(GameState $state, string $sceneKey, int $turn)`, whose body
+  is `return self::enter($this->graph, $this->applier, $state, $sceneKey, $turn, 0, [])`. The
+  `VariableSchema` import is gone with the parameter. The shared private static `enter()` tail
+  is untouched, and so are `run()`'s signature, its body and its behaviour — only the public
+  entry point changed. Behaviour is identical: same events (`SceneEntered`, `EffectsApplied`
+  per D-DIFF, `EndingReached`, no `ChoiceMade`), same `MAX_REDIRECTS = 5` budget, same
+  `UnknownSceneException` and `RedirectLoopException`, same visit and history semantics.
+- **Files:** `src/Engine/Transition.php`, `docs/engine/ast.md`,
+  `docs/sdlc/engine-core/03-implementation-notes.md`; `tests/Unit/Engine/TransitionTest.php`.
+- **Tests added:** one, and it pins the collaborator rather than the signature. The two
+  schemas in it differ in exactly one variable, `tonic`, which makes the applier observable:
+  a `Transition` built over the schema that declares it writes `tonic` through **both**
+  `run()` (choice effects) and `begin()` (`on_enter`), while the same graph through a
+  `Transition` built over the schema that does not declare it is refused by **both** with
+  `Unknown variable "tonic".` That second half is what makes the first half a statement about
+  the injected applier and not about a schema either entry point found elsewhere, so the two
+  can never again diverge in their collaborators. The eight existing `begin()` cases moved to
+  the instance call style via the test's own `transition()` helper, which now delegates to a
+  new `transitionWith(VariableSchema, …)`.
+- **Falsified.** Mutating the body back to the old shape — `begin()` building an
+  `EffectApplier` out of a schema of its own instead of using `$this->applier` — fails three
+  cases and only `begin()` ones, `run()` passing throughout:
+  `testBeginRunsTheOpeningScenesOnEnterAndMarksItVisited`,
+  `testBeginAndTheOnEnterHalfOfRunAgreeExceptForTheChoiceMade` and the new
+  `testBothEntryPointsApplyEffectsThroughTheApplierTheTransitionWasBuiltWith`. That asymmetry
+  is exactly the defect the correction removes and the new test exists to catch.
+- **Docs.** `docs/engine/ast.md` → *Entering the first scene* now shows
+  `$transition->begin(GameState, string, int)` and its rationale bullet says why it is an
+  instance method: an entry needs less machinery than a turn, but needing less of a
+  collaborator is not a reason to accept a different one.
+- **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
+  deptrac `Violations 0 / Uncovered 0` · test `OK (566 tests, 12204 assertions)` · coverage
+  `src/Engine` Lines 100.00% (691/691), Classes 100.00% (45/45), Methods 100.00% (196/196).
+- **Commit:** `refactor(engine): make begin an instance method sharing run's applier`
+- **Deviations:** none. The static shape was specified by the orchestrator in the previous
+  loop and is corrected here at the orchestrator's own instruction; F2 and the follow-up
+  loop's deviation 1 are annotated as superseded rather than rewritten, so the history of the
+  decision stays readable.
+
+## Final check state (after the API-correction loop)
+
+```
+composer cs-check -> exit 0 (Found 0 of 87 files that can be fixed)
+composer phpstan  -> exit 0 ([OK] No errors; level 8 over src, tests, config, public)
+composer deptrac  -> exit 0 (Violations 0 / Skipped violations 0 / Uncovered 0 / Allowed 0 /
+                     Warnings 0 / Errors 0)
+composer test     -> exit 0 (OK, 566 tests, 12204 assertions)
+composer coverage -> exit 0, in the container — src/Engine: Classes 100.00% (45/45),
+                     Methods 100.00% (196/196), Lines 100.00% (691/691)
+```
+
+No baseline, no `@phpstan-ignore`, no tooling config touched: the loop's diff is
+`src/Engine/Transition.php`, `tests/Unit/Engine/TransitionTest.php`, `docs/engine/ast.md` and
+this document.

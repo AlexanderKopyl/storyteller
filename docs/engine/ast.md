@@ -424,9 +424,7 @@ only in a thrown exception.
 ## Entering the first scene — `Transition::begin()`
 
 ```php
-Transition::begin(
-    StoryGraph $graph,
-    VariableSchema $schema,
+$transition->begin(
     GameState $state,
     string $sceneKey,
     int $turn,
@@ -453,10 +451,13 @@ order exist once.
   choice was made.**
 - `UnknownSceneException` if the scene, or any scene redirected to, is not in
   the graph.
-- It is static: a story that has not begun has no turn machinery yet. No
-  choice is evaluated and no `next` is resolved, so neither a
-  `ConditionEvaluator` nor a `NextSceneResolver` takes any part — the graph
-  and the schema are all it needs.
+- It is an instance method, symmetric with `run()`, and takes no graph and no
+  schema: the `Transition` already holds both. An entry needs less machinery
+  than a turn — no choice is evaluated and no `next` is resolved, so neither
+  the `ConditionEvaluator` nor the `NextSceneResolver` takes any part — but
+  the `EffectApplier` a caller constructed the `Transition` with is the one
+  both entry points use, so `run()` and `begin()` can never apply the same
+  `on_enter` under two different schemas.
 - `$turn` is the caller's own counter, as in `run()`. The Engine never reads a
   clock, and does not care whether an entry is numbered `0` or `1`.
 
