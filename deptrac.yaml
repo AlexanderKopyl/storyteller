@@ -38,6 +38,46 @@ deptrac:
         - type: directory
           value: src/Api/.*
 
+    # M3: everything under src/ that is not one of the five contexts. Granted to NO
+    # layer, so a class outside the layout is constrained rather than exempt.
+    #
+    # The hole it closes: composer.json maps `"Storyteller\\": "src/"` (deviation D-1,
+    # needed because the kernel's namespace has no other autoload rule), so
+    # src/Support/M3Probe.php in namespace Storyteller\Support is valid, autoloadable
+    # production code. The five directory collectors above do not match it, and deptrac
+    # only evaluates a dependency whose *depender* is layered - so before this layer,
+    # that file importing Doctrine AND Symfony was reported nowhere at all: not a
+    # violation, not Uncovered, exit 0. `--fail-on-uncovered` structurally cannot reach
+    # it; it closes the consumer side only.
+    #
+    # Chosen over the alternative the review offered - a unit test asserting src/ has no
+    # unlayered top-level entry - because this puts the answer in the mechanism that owns
+    # the dependency rule. A naming test would hold the layout but would still leave any
+    # file it did allow unconstrained, and it would need the context list kept in sync in
+    # a second place.
+    #
+    # What it does NOT cover, stated plainly:
+    #  - an unlayered class that depends on nothing is still silent: deptrac reports
+    #    dependencies, not the existence of a file;
+    #  - src/Kernel.php stays deliberately unlayered (R13: one file, framework by
+    #    definition, imported by no context), so it is carved out by name below. A second
+    #    class declared inside that same file would inherit the carve-out;
+    #  - it does not stop the layer-free zone from existing - it only makes code placed
+    #    there unable to import anything. The narrow cure is to drop the
+    #    `Storyteller\ => src/` psr-4 rule and classmap the kernel instead; that is a
+    #    composer.json change and is left open.
+    - name: Unlayered
+      collectors:
+        - type: bool
+          must:
+            - type: directory
+              value: src/.*
+          must_not:
+            - type: directory
+              value: src/(Shared|Engine|Content|Play|Api)/.*
+            - type: directory
+              value: src/Kernel\.php$
+
     # N1: require-dev packages. Granted to NO layer, so any import of one from src/ is a
     # violation. Without it the Framework layer below - "not ours, not a built-in" -
     # affirmatively allows `use PHPUnit\Framework\Assert;` inside Content/Play/Api, which
@@ -186,3 +226,6 @@ deptrac:
     # package. tests/ is outside `paths` (./src only), so test code using PHPUnit is
     # unaffected and must stay that way.
     Dev: []
+    # Granted nothing, and granted to nobody: code outside the five contexts may neither
+    # import anything nor be imported. A new top-level directory under src/ fails loudly.
+    Unlayered: []
