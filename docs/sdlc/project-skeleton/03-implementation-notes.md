@@ -1130,3 +1130,198 @@ find . -user root -not -path './vendor/*' -> empty
 - `docs/sdlc/project-skeleton/04-review.md` is **untracked** and was deliberately not
   committed: the fix brief forbids touching the review document. Whoever owns the phase
   docs should decide whether it is committed.
+
+---
+
+## Post-Gate-D fixes: N1, M3
+
+**Model:** `opus` — both steps edit `deptrac.yaml` and the dependency graph, which is the
+SDLC capability floor. Two findings, two logical steps, two commits. All verification ran
+inside the container (`docker compose exec php`, PHP 8.5.12); host PHP was not used.
+
+### Step N1 — `require-dev` packages are no longer inside `Framework`
+
+**Commit:** `ff3afca` — `Shared: deny require-dev packages from src/ via a Dev deptrac layer`
+
+**Files touched:** `deptrac.yaml`, `tests/Unit/Shared/DevPackageIsolationTest.php` (new).
+
+#### What the plan said, and why it could not be followed verbatim
+
+Review N1 prescribed "a `Dev` layer with a `composer` collector over the six `require-dev`
+package names". **That mechanism cannot work**, established by reading deptrac 4.7.2's
+source rather than assuming:
+
+- `ComposerFilesParser::extractNamespaces()`
+  (`vendor/deptrac/deptrac/src/DefaultBehavior/Layer/Helpers/ComposerFilesParser.php`)
+  resolves a package to its `autoload.psr-0` / `autoload.psr-4` keys and nothing else.
+- The packages that matter most declare neither. Verified against the installed tree:
+  `phpunit/phpunit` → `{"classmap": ["src/"], "files": [...]}`, every `sebastian/*` →
+  `{"classmap": ["src/"]}`, `phpstan/phpstan` → `{"files": ["bootstrap.php"]}`,
+  `theseer/tokenizer`, `phar-io/*`, `jetbrains/phpstorm-stubs` likewise. A `composer`
+  collector naming `phpunit/phpunit` therefore resolves to **zero** namespaces and matches
+  nothing — the exact symbol N1 is about, `PHPUnit\Framework\Assert`, would still pass.
+
+**Deviation, recorded:** the layer uses `classLike` namespace-prefix collectors instead of
+a `composer` collector. Namespace prefixes are the only mechanism in deptrac that can reach
+a classmap-autoloaded package.
+
+#### The dev-requirements question, answered rather than guessed
+
+deptrac's `composer` collector **does** read dev requirements:
+`ComposerFilesParser::getPackagesFromLockFile()` merges `composer.lock`'s `packages-dev`
+into the same map as `packages`, and `ComposerCollector` calls
+`autoloadableNamespacesForRequirements($packages, true)` with `includeDev` **hard-coded to
+`true`** — `ComposerConfig::toArray()` exposes no such key, so there is no YAML option to
+set either way in 4.7.2. The option governs whether a named package's own `autoload-dev`
+section is included, not whether dev requirements are visible. So that half of the
+mechanism was never the problem; the psr-4-only namespace resolution was.
+
+#### How far the layer reaches — the transitive decision
+
+**Decision: the full transitive dev-only closure, not the six direct packages.**
+`composer.lock`'s `packages-dev` holds 51 entries, and that set *is* the exact closure:
+composer places a package there only when nothing in `require` reaches it; a package needed
+by both sides lives in `packages`. Naming only the six would leave `sebastian/*`,
+`myclabs/deep-copy`, `nikic/php-parser` and `theseer/tokenizer` inside `Framework` —
+measured below, that gap is real and not theoretical.
+
+The 51 packages collapse to 20 namespace prefixes (`PHPUnit\`, `SebastianBergmann\`,
+`PhpCsFixer\`, `PHPStan\`, `Deptrac\`, `PhpParser\`, `React\`, `Composer\{Pcre,Semver,
+XdebugHandler}\`, `phpDocumentor\`, `TheSeer\`, `PharIo\`, `DeepCopy\`, `Clue\`,
+`Evenement\`, `Ergebnis\`, `Fidry\`, `staabm\`, `Symfony\Polyfill\Php8[01]\`). Each is
+annotated in `deptrac.yaml` with the package it comes from.
+
+**Cost, stated plainly and written into the comment block:** unlike `Framework`, this list
+is *not* exhaustive by construction and goes stale when a dev dependency is added, removed
+or upgraded into a new namespace. `tests/Unit/Shared/DevPackageIsolationTest.php` pays that
+cost: it recomputes the dev-only namespace set from `composer.lock` plus
+`vendor/composer/autoload_classmap.php` and `autoload_psr4.php`, compiles the layer's
+values exactly as deptrac does (`/<value>/i`), and fails in three directions — a dev
+namespace the layer misses, a **production** namespace it captures, and a prefix that
+matches no installed dev symbol (dead/stale). It also asserts `Dev` is granted to no layer,
+that `Framework` excludes `Dev`, and that `paths` is still `./src` only.
+
+That test earned its keep on first run: `^Symfony\Polyfill\Php8` also matched
+**`symfony/polyfill-php86`**, which is a *production* package in this lock. Narrowed to
+`^Symfony\Polyfill\Php8[01]\`. A hand-written prefix list would have shipped that bug.
+
+`Framework` gained `must_not: {type: layer, value: Dev}` rather than a copy of the 20
+patterns, so the two layers cannot drift apart. No cycle: `Dev` never refers to `Framework`.
+
+#### Red-first evidence (exit codes observed)
+
+| Probe | Before `Dev` | After `Dev` |
+|-------|--------------|-------------|
+| `src/Content/Domain/N1DirectProbe.php` → `PHPUnit\Framework\Assert` | `Violations 0, Allowed 2`, **exit 0** (jointly with the next row) | `DependsOnDisallowedLayer … (Dev)`, **exit 1** |
+| `src/Api/Dto/N1TransitiveProbe.php` → `SebastianBergmann\Diff\Differ` | *same run*, allowed | `DependsOnDisallowedLayer … (Dev)`, **exit 1** |
+| both probes deleted | — | `Violations 0 / Uncovered 0 / Allowed 0`, **exit 0** |
+
+**The transitive probe is the honest answer to the brief's question:** a six-package `Dev`
+layer would *not* have caught `SebastianBergmann\Diff\Differ`; the 51-package closure does.
+Confirmed in both directions — it was `Allowed` before the fix and a violation after.
+
+Positive controls, re-run against the final config: `Content` → `Doctrine\ORM\
+EntityManagerInterface` + `Symfony\Component\Routing\Route` and `Play` → `Content` +
+`Engine` give `Violations 0, Allowed 4`, **exit 0**; `Engine` → `DateTimeImmutable`,
+`Random\Randomizer`, `BcMath\Number` produces no entry at all (`php_internal`), exit 0.
+
+#### What N1 does **not** cover
+
+- Vendor **functions and constants** remain invisible to deptrac (review N2, unchanged):
+  `use function PhpCsFixer\…;` in `src/` is still not a deptrac violation. The import scan
+  in `BoundedContextLayoutTest` covers `use function` / `use const` for the `PHPUnit` root,
+  but only inside `src/Engine` and `src/Shared`.
+- A dev package reached through a **runtime string** (`new ('PHPUnit\\'.$x)`) is invisible,
+  as it is to any static analyser.
+- `Dev` is namespace-shaped, so a dev package that ever starts sharing a namespace root
+  with a production package needs a narrower prefix. `DevPackageIsolationTest`'s
+  production-side assertion is what turns that from silent to red — it already did once.
+- `migrations/` is still outside `paths` (M1, open), so a migration importing PHPUnit is
+  not covered by this.
+
+### Step M3 — a class in an unlayered namespace no longer escapes the rule
+
+**Commit:** `4badf1c` — `Shared: layer src/ outside the five contexts so it cannot escape the rule`
+
+**Files touched:** `deptrac.yaml`, `tests/Unit/Shared/UnlayeredSourceTest.php` (new).
+
+#### Mechanism chosen, and why
+
+The review offered two candidates. **Chosen: the catch-all deptrac layer.** An `Unlayered`
+layer collects `src/.*` minus `src/(Shared|Engine|Content|Play|Api)/.*` minus
+`src/Kernel\.php$`, and is granted nothing and granted to nobody.
+
+Rejected: a unit test asserting `src/` has no unlayered top-level directory. It would hold
+the *layout*, but any file it did allow would still be unconstrained, and it would need the
+five-context list kept in sync in a second place. The catch-all puts the answer inside the
+mechanism that owns the dependency rule, and it constrains the code rather than the
+directory name.
+
+`src/Kernel.php` stays deliberately unlayered (decision R13) through a one-file `must_not`.
+Confirmed with `deptrac debug:token 'Storyteller\Kernel'` → layers `---`, i.e. none.
+
+#### Red-first evidence (exit codes observed)
+
+| State | `src/Support/M3Probe.php` in `Storyteller\Support` importing `Doctrine\ORM\EntityManagerInterface` **and** `Symfony\Component\HttpFoundation\Request` |
+|-------|------|
+| Before `Unlayered` | `Violations 0 / Skipped 0 / Uncovered 0 / Allowed 0 / Warnings 0`, **exit 0** — reported nowhere at all, exactly as M3 describes |
+| After `Unlayered` | two `DependsOnDisallowedLayer` rows naming the probe and both imports `(Framework)`, `Violations 2`, **exit 1** |
+| Probe deleted | `Violations 0 / Uncovered 0 / Allowed 0`, **exit 0**; `debug:layer Unlayered` lists no tokens |
+
+`UnlayeredSourceTest` applies the collector's regexes the way `DirectoryCollector` does
+(`#<value>#i` against a normalised path) over 11 representative paths, and asserts the
+ruleset grants `Unlayered` nothing and grants it to nobody. Proven non-vacuous: deleting
+the `src/Kernel\.php$` carve-out from `deptrac.yaml` makes it **fail 1, exit 1**
+(`classifies "/app/src/Kernel.php" wrongly`); the file was restored from a scratchpad copy
+and `git diff --stat` confirmed the single expected hunk.
+
+#### What M3's fix does **not** cover — explicitly
+
+- **An unlayered class that depends on nothing is still silent.** deptrac reports
+  dependencies, not the existence of a file. A `src/Support/Constants.php` with no imports
+  passes.
+- **The layer-free zone still exists.** This makes code placed there unable to import
+  anything; it does not stop the directory being created. The narrow cure the reviewer
+  preferred — dropping `"Storyteller\\": "src/"` and classmapping `src/Kernel.php` — is a
+  `composer.json` change and is **left open**, deliberately out of scope for this step.
+- **The Kernel carve-out is file-wide, not class-wide.** A second class declared inside
+  `src/Kernel.php` would inherit the exemption.
+- Still outside `paths`: `migrations/`, `config/`, `public/`, `bin/` (M1 for migrations).
+
+### Checks after each step
+
+| Check | After N1 (`ff3afca`) | After M3 (`4badf1c`) |
+|-------|----------------------|----------------------|
+| `composer cs-fix` | exit 0, fixed 0 of 9 | exit 0, fixed 0 of 10 |
+| `composer phpstan` | exit 0, `[OK] No errors`, level 8 | exit 0, `[OK] No errors` |
+| `composer test` | exit 0, `OK (12 tests, 1913 assertions)` | exit 0, `OK (24 tests, 2020 assertions)` |
+| `composer deptrac` | exit 0, Violations 0 / Uncovered 0 | exit 0, Violations 0 / Uncovered 0 |
+| `make qa` | — | **exit 0** |
+
+Nothing was weakened to get there: PHPStan is still level 8 with no baseline, cs-fixer
+config is untouched, and deptrac gained two deny-only layers — the five context edges in
+the ruleset are byte-identical, `Api -> Engine` is still absent, and `Framework` is still
+withheld from `Engine` and `Shared`.
+
+### Deviations
+
+1. **N1's prescribed mechanism was not usable.** The review specified a `composer`
+   collector; deptrac 4.7.2 resolves that collector through psr-0/psr-4 autoload keys only,
+   and phpunit and friends autoload by classmap. Implemented with `classLike` namespace
+   prefixes plus a derivation test instead. Reason and evidence above; the comment block in
+   `deptrac.yaml` records it at the point of use.
+2. **N1's scope was widened from six packages to the 51-package dev-only closure.** The
+   brief asked for a deliberate decision on transitive reach; the transitive probe shows
+   six would have been insufficient.
+3. **A test accompanies each step** (CLAUDE.md rule 2) even though neither step touches
+   `src/Engine`. Both are config-pinning tests, not product code.
+4. **No capability-floor mismatch.** Both steps were flagged as dependency-graph work and
+   were run at `opus`. Neither touched `src/Engine/**`, a migration, a cross-context public
+   interface, or `src/Api`'s security surface.
+
+### Still open after this work
+
+M1 (`migrations/` outside every gate), M2 (PHPStan analysing the generated
+`config/reference.php`), M4 (the unrecorded `.claude/**` commit), N2, N3, N4 and m1–m10 are
+untouched. M3's narrow cure — dropping the `Storyteller\ => src/` psr-4 rule — remains the
+better long-term fix and is unresolved.
