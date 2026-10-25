@@ -572,6 +572,168 @@ Two commits, because they are two logical changes.
   — is documented as the code's actual behaviour, per this step's explicit instruction, rather
   than by repeating the plan's original framing.
 
+## Gate C fix loop 1 (review `04-review.md`)
+
+Scope as given: **B1, M2, M3 and M5 only.** M1 (no first-scene entry point), M4
+(evaluation-time error context) and M6 (golden-value RNG test) were explicitly out of scope —
+M6 is the tester's, M1 and M4 are open items for the user — and are untouched. No minor was
+fixed. `Transition`'s public signature is unchanged. One commit per finding, TDD throughout:
+the failing test and its exact failure message are recorded below before each fix.
+
+| Finding | Status | Commit |
+|---------|--------|--------|
+| B1 — `float` does not survive JSON | done | `fix(engine): B1 make float variables survive a JSON round trip` (9671a19) |
+| M2 — an undeclared variable aborts every turn | done | `fix(engine): M2 stop an undeclared variable from aborting every turn` (b028b2b) |
+| M3 — `"condition": null` becomes an unguarded choice | done | `fix(engine): M3 reject an explicit null condition instead of dropping it` (633c1e3) |
+| M5 — two failures share one exception type | done | `fix(engine): M5 give ChoiceUnavailableException a typed reason` (e4ca1b9) |
+
+### B1 — `float` variables now survive a JSON round trip
+
+- **Failing tests first.** Five new cases, all red before the change. The messages, verbatim:
+  - `VariableSchemaTest::testASchemaWhoseDefaultIsAnIntegralFloatSurvivesAJsonRoundTrip` →
+    `TypeMismatchException: Variable "ratio" is declared as float, but the value is of type int.`
+    (from `VariableDefinition.php:26`, via `VariableSchema::fromArray()`)
+  - `EffectApplierTest::testASetNodeWithAnIntegralFloatValueSurvivesAJsonRoundTrip` → the same
+    message, from `VariableSchema.php:127` via `EffectApplier::set()`.
+  - `ConditionEvaluatorTest::testAnEqOnAnIntegralFloatHoldsIdenticallyBeforeASaveAndAfterAReload`
+    → the same message, from `ConditionEvaluator.php:68`.
+  - `GameStateTest::testAFullStateWithAnIntegralFloatSurvivesAJsonEncodeDecodeCycle` →
+    `Failed asserting that 1 is identical to 1.0.`
+  - `VariableTypeTest::testAcceptsMatchesTheDeclaredType@float accepts int` →
+    `Failed asserting that false is identical to true.`
+- **Changed.** `VariableType::accepts()` — `Float` now accepts an `int`; `Int` still refuses a
+  `float`, which is the whole point of the asymmetry (widening is lossless, narrowing is not,
+  and PHP draws the same line under `strict_types=1`). New `VariableType::canonicalise()` is
+  the single normalisation function: an `int` under a `Float` declaration becomes a real
+  `float`, nothing else is ever touched, nothing is ever narrowed or coerced.
+  It is reached from every schema-aware boundary, so no operator can see the two forms as
+  different: `VariableDefinition::__construct()` (schema defaults — `$default` is no longer a
+  promoted property, because a readonly promoted property cannot be reassigned in the
+  constructor body), `VariableSchema::resolve()` (the one place a variable is read),
+  the new `VariableSchema::canonicalise()`, `ConditionEvaluator::compare()` (both sides of the
+  `===`, never just one) and `EffectApplier::set()` / `arithmetic()`.
+- **Files:** `src/Engine/State/VariableType.php`, `VariableDefinition.php`, `VariableSchema.php`,
+  `GameState.php` (docblock only), `src/Engine/ConditionEvaluator.php`,
+  `src/Engine/EffectApplier.php`, `docs/engine/ast.md`; tests in
+  `tests/Unit/Engine/State/VariableTypeTest.php`, `VariableSchemaTest.php`, `GameStateTest.php`,
+  `tests/Unit/Engine/ConditionEvaluatorTest.php`, `tests/Unit/Engine/EffectApplierTest.php`.
+- **Tests added:** the four the orchestrator named (schema default `1.0`; a
+  `{"op":"set","value":1.0}` node; an `eq` identical before a save and after a reload; a full
+  `GameState` → `json_encode` → `json_decode` → `GameState` cycle), plus an eight-case
+  `canonicalise()` grid that pins the asymmetry in both directions and two
+  `VariableSchema::resolve()` / `canonicalise()` cases. The existing acceptance grid was
+  updated, not deleted: it still asserts every one of the sixteen type/value pairs.
+- **Checks:** cs-fix 0/84 · phpstan `[OK] No errors` · deptrac 0 violations · test
+  466 passed / 7600 assertions · coverage `Lines 100.00% (638/638)`.
+- **Deviation (B1-a), deliberate and reported rather than worked around.** The instruction was
+  to normalise "at a single ingestion point" and to route `GameState::withVar()` and the
+  array/`create()` constructors through it. **`GameState` cannot canonicalise**, because it
+  carries no schema — that is a documented structural invariant of the class ("the state
+  carries no schema and therefore validates no types"), and `GameState::fromArray()`, the
+  method that actually reads the JSONB column, has no way to learn a variable's declared type.
+  Giving it one would change a public signature and re-open a design decision that is not
+  mine to take. What I did instead holds the property the instruction was protecting: there is
+  exactly **one** normalisation function (`VariableType::canonicalise()`), the applier is the
+  Engine's only writer of `vars` and always writes canonical values, and
+  `VariableSchema::resolve()` canonicalises on the way out — so the raw `int` a reloaded state
+  may carry is invisible to every operator, and `StateDiff` (which reads through `resolve()`)
+  and `DeterminismTest` stay consistent. `GameState::var()` remains the raw view and is
+  documented as such. The residual gap: `$state->var('ratio')` on a state loaded straight from
+  JSONB returns `int 1` rather than `1.0`. Nothing in the Engine reads it that way.
+- **Deviation (B1-b).** The review's B1 also suggested validating the *resolved* value against
+  the declared type inside `ConditionEvaluator::compare()`, as `EffectApplier::arithmetic()`
+  already does. **Not done** — the orchestrator's scope for B1 is the float round trip, and
+  that change alters what a type-disagreeing state does (silently `false` today, throw
+  tomorrow) for reasons unrelated to JSON. It is a real inconsistency and should be carried
+  forward as its own finding rather than smuggled in here.
+- **Two `assertIsArray()` calls omitted** at the two `json_decode` sites where the encoded
+  input is a literal: PHPStan level 8 proves the decoded shape there and reports
+  `staticMethod.alreadyNarrowedType`, i.e. an assertion that could never run. A comment at
+  each site says so. The other two round-trip tests keep their `assertIsArray()`, because the
+  analyser cannot narrow those. No suppression, no config change.
+
+### M2 — an undeclared variable no longer aborts every turn
+
+- **Failing tests first.** `EffectApplierTest::testAStateCarryingAnUndeclaredVariableStillTakesAnEmptyTurn`
+  and `StateDiffTest::testAnUndeclaredVariableAloneLeavesTheDiffEmpty`, both red with
+  `UnknownVariableException: Unknown variable "legacy_mana".` raised from `StateDiff.php:45`
+  — in the applier's case through `EffectApplier.php:61`, i.e. on `apply([], $state)` with no
+  effects at all, exactly as the review reproduced it.
+- **Changed.** `StateDiff::between()` skips a variable name the schema does not declare.
+  A diff is a read-only observation of state, not a resolution of a name an author wrote;
+  applying P3's strict rule to a passive enumeration turned "the author asked about an unknown
+  variable" into "this session can never take another turn". `isEmpty()` and the event payload
+  are unaffected, since an undeclared name has no declared default to diff against.
+- **Files:** `src/Engine/State/StateDiff.php`, `docs/engine/ast.md`; tests in
+  `tests/Unit/Engine/State/StateDiffTest.php` and `tests/Unit/Engine/EffectApplierTest.php`.
+- **Tests added:** three — the empty turn over a state carrying `legacy_mana`; a diff that
+  reports `hp` and silently skips `legacy_mana` in the same call; and
+  `testAnEffectThatNamesAnUndeclaredVariableStillThrows`, which pins that the strict rule is
+  *narrowed*, not removed.
+- **Checks:** cs-fix 0/84 · phpstan `[OK] No errors` · deptrac 0 violations · test
+  470 passed / 7608 assertions · coverage `Lines 100.00% (640/640)`.
+- **Deviations:** none.
+
+### M3 — an explicit `null` condition is rejected instead of silently dropped
+
+- **Failing tests first.** `ChoiceNodeTest::testAnOmittedConditionIsAlwaysAvailableButAnExplicitNullIsRejected`
+  and `NextRuleTest::testAnOmittedIfIsAFallbackButAnExplicitNullIsRejected`, both
+  `Failed asserting that exception of type "Storyteller\Engine\Exception\MalformedNodeException" is thrown.`
+  — i.e. the node parsed happily, which is the bug. The third,
+  `ArrayReaderTest::testRejectNullFiresOnlyForAKeyThatIsPresentAndNull`, was
+  `Error: Call to undefined method Storyteller\Engine\Support\ArrayReader::rejectNull()`.
+- **Changed.** New `ArrayReader::rejectNull(string $key, string $expected)` —
+  `array_key_exists() && === null`, raising
+  `MalformedNodeException::wrongType($path, $key, 'object', 'null')`. `has()` is left alone:
+  it is correct for a `??` narrowing and is used that way everywhere else. `ChoiceNode` calls
+  it for `condition` and `NextRule` for `if`, each right after `rejectUnknownKeys()`.
+- **Files:** `src/Engine/Support/ArrayReader.php`, `src/Engine/Graph/ChoiceNode.php`,
+  `src/Engine/Graph/NextRule.php`, `docs/engine/ast.md`; tests in
+  `tests/Unit/Engine/Support/ArrayReaderTest.php`, `tests/Unit/Engine/Graph/ChoiceNodeTest.php`,
+  `tests/Unit/Engine/Graph/NextRuleTest.php`.
+- **Tests added:** three, each asserting **both** readings in one test — the omitted key still
+  means "no guard" / "fallback", the explicit null is rejected with the exact message
+  (`choice: key "condition" must be of type object, got null.` and
+  `next[0]: key "if" must be of type object, got null.`). The reader test also asserts that an
+  absent key and a non-null value both stay silent.
+- **Checks:** cs-fix 0/84 · phpstan `[OK] No errors` · deptrac 0 violations · test
+  473 passed / 7617 assertions · coverage `Lines 100.00% (644/644)`.
+- **Deviation (M3-a).** Scoped to `condition` and `if`, the two keys the orchestrator named.
+  The review additionally suggested `next`, `qty` and `times` ("`qty: null` becomes `qty = 1`,
+  `next: null` becomes a dead end"). Those are real but were not in this loop's instruction,
+  and `rejectNull()` is now the primitive they need — one call each. Left for the next loop.
+
+### M5 — the two `ChoiceUnavailableException` cases are distinguishable by type
+
+- **Failing tests first.** Five cases red with
+  `Error: Class "Storyteller\Engine\Exception\ChoiceUnavailableReason" not found`, plus
+  `TransitionTest::testTheTwoUnavailableReasonsAreNotTheSame` →
+  `Failed asserting that null is not identical to null.` with
+  `Warning: Undefined property: ChoiceUnavailableException::$reason` — the clearest possible
+  statement that the two failures were indistinguishable.
+- **Changed.** New `ChoiceUnavailableReason` enum (`not_found` / `condition_failed`) and a
+  `public readonly ChoiceUnavailableReason $reason` on the exception, set by the two named
+  constructors through a now-private constructor. Backing values are documented as the wire
+  form, because Api will map them onto 404/422 vs 409.
+- **Files:** `src/Engine/Exception/ChoiceUnavailableReason.php` (new),
+  `src/Engine/Exception/ChoiceUnavailableException.php`, `src/Engine/Transition.php`
+  (`@throws` line only), `docs/engine/ast.md`; tests in
+  `tests/Unit/Engine/Exception/EngineExceptionTest.php`, `tests/Unit/Engine/TransitionTest.php`,
+  `tests/Unit/Engine/Graph/SceneNodeTest.php`, `tests/Unit/Engine/EnginePurityTest.php`.
+- **Tests added / changed:** the two `TransitionTest` cases and the `SceneNodeTest` case were
+  converted from `expectException` to catch-and-assert, so each now asserts its `reason` as
+  well as its message — the review's point was precisely that no test discriminated them.
+  Added: a third `Transition` case asserting the two reasons differ for two keys of the same
+  scene, a per-constructor reason assertion, and a case-list test pinning both backing values.
+- **Two test-guard updates, both tightened rather than loosened.**
+  `EngineExceptionTest::testTheExceptionDirectoryHoldsExactlyTheDeclaredFamily` would have
+  failed on the new file, so a `FAMILY_SUPPORT_TYPES` constant now names the enum explicitly —
+  the guard still fails on any *unlisted* file. `EnginePurityTest::SHARED_COVERAGE` gained the
+  matching entry; its own staleness self-test keeps that honest.
+- **Checks:** cs-fix 0/85 · phpstan `[OK] No errors` · deptrac 0 violations · test
+  476 passed / 7675 assertions · coverage `Lines 100.00% (651/651)`.
+- **Deviations:** none.
+
 ## Deviations from the plan
 
 1. **Step 1 — none.** (Unchanged from the original entry: both edge cases the plan anticipated
@@ -634,18 +796,35 @@ Two commits, because they are two logical changes.
     once, in a docblock, only to say it is never used — which still produced a hit and made the
     grep ambiguous. The follow-up rewords the sentence; comment-only, no behaviour change.
     `grep -rn Secure src/` is now empty. History was not rewritten.
+14. **Gate C fix loop 1 — `GameState` is not a canonicalisation point (B1-a).** The fix
+    instruction named `GameState::withVar()` and `create()` among the paths that must
+    normalise a float. They cannot: `GameState` carries no schema, by design, and
+    `fromArray()` — the method that actually reads the JSONB column — has no way to learn a
+    variable's declared type. Normalisation is therefore applied at every schema-aware
+    boundary instead, which holds the property the instruction protects. Full reasoning and
+    the residual gap are under *Gate C fix loop 1 → B1*.
+15. **Gate C fix loop 1 — two suggestions deliberately not taken.** The review's B1 also
+    proposed validating the *resolved* value inside `ConditionEvaluator::compare()` (B1-b),
+    and its M3 also proposed rejecting an explicit null for `next`, `qty` and `times` (M3-a).
+    Both are out of this loop's stated scope, both change behaviour for reasons unrelated to
+    the finding as scoped, and both are recorded above so the next loop can pick them up.
+    `rejectNull()` is already the primitive M3-a needs.
 
-## Final check state (after step 15)
+## Final check state (after Gate C fix loop 1)
 
 ```
-composer cs-check -> exit 0 (Found 0 of 84 files that can be fixed)
+composer cs-check -> exit 0 (Found 0 of 85 files that can be fixed)
 composer phpstan  -> exit 0 ([OK] No errors; level 8 over src, tests, config, public)
 composer deptrac  -> exit 0 (Violations 0 / Skipped violations 0 / Uncovered 0 / Allowed 0 /
                      Warnings 0 / Errors 0)
-composer test     -> exit 0 (OK, 451 tests, 7566 assertions)
-composer coverage -> exit 0 — src/Engine: Classes 100.00% (44/44), Methods 100.00% (185/185),
-                     Lines 100.00% (630/630)
+composer test     -> exit 0 (OK, 476 tests, 7675 assertions)
+composer coverage -> exit 0 — src/Engine: Classes 100.00% (44/44), Methods 100.00% (189/189),
+                     Lines 100.00% (651/651)
 ```
+
+Previous state, after step 15 / before the fix loop, for comparison: 84 files, 451 tests,
+7566 assertions, 185 methods, 630 lines — all four checks already green. The fix loop added
+25 tests, 109 assertions, 4 methods and 21 lines, and left every figure at 100.00 %.
 
 Integrity checks, all clean: `phpstan-baseline.neon` absent · `grep -rn phpstan-ignore src
 tests` → 0 · no `Symfony|Doctrine|Psr|Monolog|PHPUnit` import in `src/Engine` → 0 · no
@@ -658,6 +837,14 @@ now machine-held by `EnginePurityTest` rather than re-run by hand. `git diff --s
 
 ## Left for the tester / reviewer
 
+- **Still open from `04-review.md`, by instruction, not by oversight:** M1 (no entry point for
+  a story's first scene) and M4 (no scene/choice/phase context on evaluation-time errors) are
+  open items for the user; M6 (the golden-value RNG test) is assigned to the tester. All five
+  minors are untouched. `Transition`'s public signature is unchanged.
+- **Carried forward from the fix loop:** B1-b (validate the resolved value in
+  `ConditionEvaluator::compare()`, so a type-disagreeing state does not silently evaluate
+  `false` in the evaluator while the applier throws) and M3-a (`rejectNull()` for `next`,
+  `qty` and `times`). Both are one-line changes on top of what landed.
 - **`Allowed 0` is expected, not a failure** (deviation 6). If AC-4 is to stay machine-checked,
   the checkable property is the analysed-file count (1 before step 2, 78 after step 13) or the
   absence of an `Engine -> Shared` entry, not the `Allowed` figure. The step-13 probe is the
