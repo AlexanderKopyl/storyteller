@@ -11,6 +11,7 @@ use PHPUnit\Framework\TestCase;
 use Storyteller\Engine\Exception\MalformedNodeException;
 use Storyteller\Engine\Exception\UnknownVariableException;
 use Storyteller\Engine\State\GameState;
+use Storyteller\Engine\State\StateDiff;
 use Storyteller\Engine\State\VariableDefinition;
 use Storyteller\Engine\State\VariableSchema;
 use Storyteller\Engine\State\VariableType;
@@ -250,6 +251,61 @@ final class GameStateTest extends TestCase
             $schema->resolve('ratio', $state),
             $schema->resolve('ratio', $reloaded),
         );
+
+        // r1: `assertEquals` above is loose on purpose, and this is why.
+        // `var()` is the raw view and carries whatever PHP type the array
+        // held; `resolve()` is the only honest read, because it is the only
+        // one that knows the declaration. See
+        // testTwoSemanticallyEqualStatesDifferUnderStrictArrayComparison().
+        self::assertIsFloat($state->var('ratio'));
+        self::assertIsInt($reloaded->var('ratio'));
+    }
+
+    /**
+     * **r1 — the residual gap of B1, pinned in executable form.**
+     *
+     * `GameState` carries no schema, so neither `create()`, `withVar()` nor
+     * `fromArray()` can know that `ratio` is declared `float` and widen the
+     * `int` that JSON handed back. Two semantically equal states can therefore
+     * differ under `===`.
+     *
+     * Everything that matters is nevertheless identical, and each assertion
+     * below says which guarantee it holds:
+     *
+     *  - the encoded bytes are the same, so one shape reaches JSONB;
+     *  - `resolve()` — the Engine's only read path — returns the same `float`;
+     *  - `StateDiff` sees no change, so no phantom `EffectsApplied` is emitted.
+     *
+     * The day someone adds `GameState::equals()` as
+     * `$this->toArray() === $other->toArray()`, two identical saved sessions
+     * compare unequal and this test is what says so. `Play` must compare
+     * states by their encoded JSON or through `resolve()`, never by `===` on
+     * `toArray()`.
+     */
+    public function testTwoSemanticallyEqualStatesDifferUnderStrictArrayComparison(): void
+    {
+        $schema = VariableSchema::of([new VariableDefinition('ratio', VariableType::Float, 0.0)]);
+
+        $written = GameState::create(['ratio' => 1.0], [], [], [], []);
+        $reloaded = GameState::create(['ratio' => 1], [], [], [], []);
+
+        // The gap itself: same meaning, different PHP type, so not `===`.
+        self::assertIsFloat($written->var('ratio'));
+        self::assertIsInt($reloaded->var('ratio'));
+        self::assertNotSame($written->toArray(), $reloaded->toArray());
+
+        // ... and the three things that keep it from mattering.
+        self::assertSame(
+            json_encode($written->toArray(), JSON_THROW_ON_ERROR),
+            json_encode($reloaded->toArray(), JSON_THROW_ON_ERROR),
+        );
+        self::assertSame(1.0, $schema->resolve('ratio', $written));
+        self::assertSame(1.0, $schema->resolve('ratio', $reloaded));
+        self::assertTrue(StateDiff::between($written, $reloaded, $schema)->isEmpty());
+        self::assertSame([], StateDiff::between($written, $reloaded, $schema)->toArray());
+
+        // Loose equality still holds, which is what the round-trip test asserts.
+        self::assertEquals($written, $reloaded);
     }
 
     public function testStateIsIndependentOfTheOrderWithMethodsAreApplied(): void
