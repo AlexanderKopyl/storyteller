@@ -69,8 +69,9 @@ done.
   `json_encode(1.0)` emits `1` and `json_decode("1")` returns an `int`, so an
   integral float in a schema default, in a `set` / `add` / `sub` value, in a
   comparison literal or in a stored variable comes back from the snapshot or
-  the session column as an `int`. Widening is lossless, so it is allowed and
-  the value is **canonicalised** back to a real `float`
+  the session column as an `int`. Widening is lossless for every value a story
+  will hold, so it is allowed and the value is **canonicalised** back to a real
+  `float`
   (`VariableType::canonicalise()`, reached through
   `VariableSchema::canonicalise()` and `VariableSchema::resolve()`). Narrowing
   is not lossless, so a `float` literal under an `int` declaration is still
@@ -78,7 +79,11 @@ done.
   before a save is true after the reload. Note that `GameState` itself holds
   no schema and so stores whatever it was handed — the widening happens on
   every schema-aware read and write, which is every read and write the Engine
-  performs.
+  performs. **The limit of the widening is 2^53** (`9007199254740992`): past
+  it an `int` is rounded to the nearest representable double —
+  `9007199254740993` is accepted and read back as `9007199254740992.0`, so an
+  `eq` cannot tell the two apart. A `float` variable could not hold such a
+  value in any case, and JSON would have rounded it on the way to the column.
 - **The Engine trusts its inputs.** All of the above is format validation
   against trusted, already-compiled content — it is not a security boundary.
   External input is validated in `src/Api` before it ever reaches the Engine.

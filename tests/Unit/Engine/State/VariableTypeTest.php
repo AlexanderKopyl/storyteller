@@ -26,10 +26,10 @@ final class VariableTypeTest extends TestCase
 
     /**
      * The grid is exhaustive on purpose, and deliberately asymmetric: `Float`
-     * accepts an int (widening is lossless, and `json_decode` hands back an
-     * int for any float written with a zero fraction), while `Int` still
-     * refuses a float, which is what makes "no silent narrowing" enforceable
-     * later in the applier.
+     * accepts an int (widening is lossless below 2^53 — see the case at the
+     * bottom of this file — and `json_decode` hands back an int for any float
+     * written with a zero fraction), while `Int` still refuses a float, which
+     * is what makes "no silent narrowing" enforceable later in the applier.
      */
     #[DataProvider('acceptanceGridProvider')]
     public function testAcceptsMatchesTheDeclaredType(
@@ -64,16 +64,18 @@ final class VariableTypeTest extends TestCase
     }
 
     /**
-     * **r2 — the class docblock's "widening loses nothing" is false above
-     * 2^53, and this is where the limit becomes discoverable.**
+     * **r2 — the limit of the int-to-float widening, in executable form.**
      *
      * A `float` holds 53 bits of mantissa, so `9007199254740993` — the first
      * odd integer past the boundary — is not representable and widening
      * silently returns its even neighbour. `accepts()` says yes, so nothing
      * throws; the author's number is simply changed. The limit is a property
-     * of IEEE-754 and of JSON, not of this code, which is why the honest fix
-     * is to correct the docblock rather than the behaviour — but the limit
-     * must be written down somewhere that fails if it ever moves.
+     * of IEEE-754 and of JSON, not of this code, which is why the fix taken
+     * was to state it in `VariableType`'s docblock rather than to refuse the
+     * widening — but the limit must be written down somewhere that fails if it
+     * ever moves. That is here. If the alternative is ever chosen (refusing
+     * the widening above 2^53 and letting `assertAccepts()` throw), this case
+     * and two provider rows go red, which is the correct signal.
      *
      * An `int`-declared variable is unaffected: nothing is ever narrowed, so
      * the same literal stays exact.

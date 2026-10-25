@@ -1083,3 +1083,35 @@ red message recorded for each, `cs-fix` + `phpstan` after each.
   deptrac `Violations 0 / Uncovered 0` · test `OK (562 tests, 8012 assertions)`.
 - **Commit:** `fix(engine): say where an evaluation-time error happened`
 - **Deviations:** none.
+
+### F4 — the docblock that justified the asymmetry was false above 2^53 (r2, minor)
+
+- **Red first — by probe, not by a new test**, because the behaviour was already pinned
+  red-first in `ce2046e` and only the comment was wrong. The three pinning cases were
+  re-falsified in this tree by taking the review's *alternative* fix (refusing the widening
+  above 2^53 inside `canonicalise()`):
+
+  ```
+  ConditionEvaluatorTest::testAFloatDeclaredVariableCannotTellTwoIntegersAbove2Pow53Apart
+  VariableTypeTest::testCanonicaliseWidensOnlyAnIntIntoAFloatDeclaration@float declaration rounds 2^53 + 1 to its even neighbour
+  VariableTypeTest::testWideningAnIntIntoAFloatDeclarationIsLossyAbove2Pow53
+  Tests: 104, Failures: 3
+  ```
+
+  So the documented claim is the one the suite holds, and changing the behaviour instead
+  would have been a visible, not a silent, decision.
+- **Changed.** `src/Engine/State/VariableType.php:13` now reads "widening is lossless for
+  every value a story will hold — above 2^53 an int is rounded to the nearest representable
+  double, as it would be by JSON anyway", the review's own wording. `canonicalise()`'s
+  docblock states the exact limit (`9007199254740992`), the observable consequence
+  (`9007199254740993` comes back as `…992.0`, silently), the rejected alternative and why,
+  and names the two tests that hold it.
+- **Files:** `src/Engine/State/VariableType.php`, `docs/engine/ast.md`;
+  `tests/Unit/Engine/State/VariableTypeTest.php` (two docblocks that quoted the false claim —
+  rule 1's matching test change; no assertion was altered).
+- **Docs.** `docs/engine/ast.md`'s *Conventions* bullet said "Widening is lossless" flatly;
+  it now carries the same limit and the `eq` consequence.
+- **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
+  test `OK (562 tests, 8012 assertions)` (unchanged — a comment).
+- **Commit:** `docs(engine): state the real limit of the int-to-float widening`
+- **Deviations:** none.
