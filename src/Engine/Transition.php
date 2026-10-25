@@ -16,10 +16,18 @@ use Storyteller\Engine\Exception\RedirectLoopException;
 use Storyteller\Engine\Exception\UnknownSceneException;
 use Storyteller\Engine\Graph\StoryGraph;
 use Storyteller\Engine\State\GameState;
+use Storyteller\Engine\State\VariableSchema;
 
 /**
  * One turn: a player at a scene picks a choice, and this is everything that
  * follows.
+ *
+ * There are two entry points and they share their second half. {@see self::run()}
+ * is a turn — a choice is named, its condition checked, its effects applied,
+ * the `next` resolved — and {@see self::begin()} is the entry that starts a
+ * story, where no choice has been made yet. Both end in the same private
+ * `enter()`: one `on_enter` redirect chain, one budget, one visit rule, one
+ * event order.
  *
  * **The redirect budget is one counter per turn.** A `goto` in the choice's
  * effects spends the first of five; every `goto` in a target scene's
@@ -57,7 +65,7 @@ final readonly class Transition
      */
     public function run(GameState $state, string $currentScene, string $choiceKey, int $turn): TransitionResult
     {
-        $this->requireScene($currentScene);
+        self::requireScene($this->graph, $currentScene);
 
         $scene = $this->graph->scene($currentScene);
         $choice = $scene->choice($choiceKey);
@@ -81,16 +89,77 @@ final readonly class Transition
             // entirely, and spends the first redirect of the turn.
             $target = $chosen->redirectTo;
             $redirects = 1;
-            $this->guardRedirects($redirects, $target);
+            self::guardRedirects($redirects, $target);
         } else {
             $target = $this->resolver->resolve($scene->next, $state, $currentScene);
             $redirects = 0;
         }
 
-        $this->requireScene($target);
+        return self::enter($this->graph, $this->applier, $state, $target, $turn, $redirects, $events);
+    }
+
+    /**
+     * Enter a scene with no choice having been made: a story's opening scene,
+     * and the only way its `on_enter` ever runs.
+     *
+     * Without this, nothing applies the first scene's effects, nothing marks
+     * it visited and nothing emits its `SceneEntered` — so a story that sets
+     * `hp` on arrival begins without it, and `{"op":"visited","scene":"start"}`
+     * is false while the player is standing in it. A caller could only fix
+     * that by re-implementing the entry algorithm, which would move D-VISIT
+     * and D-REDIRECT into a context that is not supposed to know them. Here
+     * it stays in one place: `begin()` and `run()` call the same private
+     * {@see self::enter()}, so the two cannot drift apart.
+     *
+     * Static because a story that has not begun has no turn machinery yet —
+     * there is no choice to evaluate and no `next` to resolve, so neither a
+     * `ConditionEvaluator` nor a `NextSceneResolver` takes any part. The graph
+     * and the schema are all it needs.
+     *
+     * The budget is the same five, spent the same way by a `goto` in the
+     * opening scene's `on_enter`, and refused with the same
+     * `RedirectLoopException`. Events are the turn's, minus the one that would
+     * be a lie: **no `ChoiceMade` is emitted, because no choice was made.**
+     *
+     * @param  int                   $turn the caller's turn counter; the Engine never reads a clock
+     * @throws UnknownSceneException if the scene, or any scene reached from it, is unknown
+     * @throws RedirectLoopException if the entry spent more than MAX_REDIRECTS redirects
+     */
+    public static function begin(
+        StoryGraph $graph,
+        VariableSchema $schema,
+        GameState $state,
+        string $sceneKey,
+        int $turn,
+    ): TransitionResult {
+        return self::enter($graph, new EffectApplier($schema), $state, $sceneKey, $turn, 0, []);
+    }
+
+    /**
+     * Coming to rest on a scene: its `on_enter`, the redirect chain that may
+     * start, the visit, and the events that follow.
+     *
+     * `run()` arrives here having already made a choice and possibly spent the
+     * first redirect on it; `begin()` arrives with neither. Everything from
+     * this point on is identical for both, which is why it is written once.
+     *
+     * @param  list<EngineEvent>     $events the events emitted so far, continued
+     * @throws UnknownSceneException if the target, or any scene redirected to, is unknown
+     * @throws RedirectLoopException if the budget is exceeded
+     */
+    private static function enter(
+        StoryGraph $graph,
+        EffectApplier $applier,
+        GameState $state,
+        string $target,
+        int $turn,
+        int $redirects,
+        array $events,
+    ): TransitionResult {
+        self::requireScene($graph, $target);
 
         while (true) {
-            $entered = $this->applier->apply($this->graph->scene($target)->onEnter, $state);
+            $entered = $applier->apply($graph->scene($target)->onEnter, $state);
             $state = $entered->state;
 
             if (!$entered->diff->isEmpty()) {
@@ -102,18 +171,18 @@ final readonly class Transition
             }
 
             ++$redirects;
-            $this->guardRedirects($redirects, $entered->redirectTo);
+            self::guardRedirects($redirects, $entered->redirectTo);
 
             $target = $entered->redirectTo;
 
-            $this->requireScene($target);
+            self::requireScene($graph, $target);
         }
 
         $state = $state->withVisit($target);
 
         $events[] = new SceneEntered($target, $redirects, $turn);
 
-        $isEnding = $this->graph->isEnding($target);
+        $isEnding = $graph->isEnding($target);
 
         if ($isEnding) {
             $events[] = new EndingReached($target, $turn);
@@ -127,16 +196,16 @@ final readonly class Transition
      * exactly one place the off-by-one can live: five redirects complete, the
      * sixth throws.
      */
-    private function guardRedirects(int $redirects, string $scene): void
+    private static function guardRedirects(int $redirects, string $scene): void
     {
         if ($redirects > self::MAX_REDIRECTS) {
             throw RedirectLoopException::exceeded(self::MAX_REDIRECTS, $scene);
         }
     }
 
-    private function requireScene(string $sceneKey): void
+    private static function requireScene(StoryGraph $graph, string $sceneKey): void
     {
-        if (!$this->graph->hasScene($sceneKey)) {
+        if (!$graph->hasScene($sceneKey)) {
             throw UnknownSceneException::named($sceneKey);
         }
     }

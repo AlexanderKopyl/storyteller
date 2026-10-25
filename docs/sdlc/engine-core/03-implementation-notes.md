@@ -979,3 +979,54 @@ red message recorded for each, `cs-fix` + `phpstan` after each.
   deptrac `Violations 0 / Uncovered 0` · test `OK (546 tests, 7947 assertions)`.
 - **Commit:** `feat(engine): validate a loaded state against its schema`
 - **Deviations:** none.
+
+### F2 — `Transition::begin()`, the entry point for the first scene (M1, major)
+
+- **Red first.** Seven new cases in `tests/Unit/Engine/TransitionTest.php`:
+
+  ```
+  Error: Call to undefined method Storyteller\Engine\Transition::begin()
+  ```
+
+- **Changed.** `run()`'s signature and behaviour are untouched; its second half moved into a
+  private static `enter(StoryGraph, EffectApplier, GameState, string $target, int $turn,
+  int $redirects, list<EngineEvent> $events)` holding the `on_enter` redirect loop, the
+  budget guard, `withVisit()`, `SceneEntered`, `isEnding()` and `EndingReached`. `run()` ends
+  with `return self::enter(...)` carrying the choice events and the redirect already spent on
+  a choice `goto`; `begin()` calls the same method with an empty event list and a counter of
+  zero. `guardRedirects()` and `requireScene()` became static (`requireScene()` takes the
+  graph), which is what lets both paths share them. The `requireScene($target)` that stood
+  just before the loop now lives at the top of `enter()` — same call, same position in the
+  order.
+- **Files:** `src/Engine/Transition.php`, `docs/engine/ast.md`;
+  `tests/Unit/Engine/TransitionTest.php`.
+- **Tests added:** seven. The opening scene's `on_enter` applied, visited, in `history`, with
+  the full event list asserted literally and **no `choice_made`**; an opening scene with no
+  `on_enter` still entered; a `goto` out of the opening scene's `on_enter` (D-VISIT: the
+  scene left is transited, not entered); the budget at five and at six, with the same
+  message; an unknown opening scene; an ending reached immediately (a one-scene story); and
+  the agreement case — the same graph entered through a choice and through `begin()` produces
+  the identical state, scene, `isEnding`, and an identical event list once the run's
+  `choice_made` is dropped.
+- **Falsified both ways.** `begin()` starting the counter at 1 instead of 0 → 4 of the 7 fail,
+  the agreement case among them. Mutating the **shared tail** (marking a transited scene
+  visited) → 4 failures spread across *both* entry points
+  (`testAGotoInOnEnterRedirectsAgain`, `testVisitedCountsAcrossSeveralTurns…`,
+  `testASceneRedirectedThroughIsNotMarkedVisited…`, `testBeginFollowsAGotoOutOf…`), which is
+  the evidence that the tail really is one implementation and not two.
+- **Docs.** `docs/engine/ast.md` gains an *Entering the first scene* section (signature,
+  budget, event list, the static rationale) and the event-order paragraph now states what
+  `begin()` emits.
+- **Checks:** cs-check `Found 0 of 87 files that can be fixed` · phpstan `[OK] No errors` ·
+  deptrac `Violations 0 / Uncovered 0` · test `OK (553 tests, 7976 assertions)`.
+- **Commit:** `feat(engine): add an entry point for a story's first scene`
+- **Deviation — the signature is the user's, the staticness is its consequence.** The review
+  (M1) proposed an instance method `Transition::enter(GameState, string, int)`; the
+  instruction specifies `begin(StoryGraph $graph, VariableSchema $schema, GameState $state,
+  string $sceneKey, int $turn)`. The instruction's shape is what was built. Two notes for the
+  reviewer, neither of which changes it: taking a graph on a method of an object that already
+  holds one would leave two graphs in scope with no rule about which wins, so `begin()` is
+  **static** instead — which is also honest about the fact that an entry needs neither the
+  evaluator nor the resolver the constructor demands; and `begin()` therefore builds its own
+  `EffectApplier` from the schema, the one piece of wiring `Transition` now knows about
+  itself. The shared tail is a private static for the same reason.

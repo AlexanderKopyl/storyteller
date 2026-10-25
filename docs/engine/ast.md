@@ -413,6 +413,45 @@ sixth hop rather than have the Engine detect the cycle structurally.
 redirect happened at all), so the budget is observable in the event log, not
 only in a thrown exception.
 
+## Entering the first scene — `Transition::begin()`
+
+```php
+Transition::begin(
+    StoryGraph $graph,
+    VariableSchema $schema,
+    GameState $state,
+    string $sceneKey,
+    int $turn,
+): TransitionResult
+```
+
+`run()` needs a current scene and a choice, so nothing it does can apply a
+story's **opening** scene's `on_enter`, mark it visited or emit its
+`SceneEntered`. `begin()` is that entry, and it is the second half of a turn
+re-used rather than re-implemented: both methods finish in the same private
+`enter()`, so the redirect chain, the budget, the visit rule and the event
+order exist once.
+
+- The target scene's `on_enter` is applied, and a `goto` in it is followed —
+  spending the same budget of `MAX_REDIRECTS = 5` and refused with the same
+  `RedirectLoopException`. A scene redirected out of is transited, not
+  entered, exactly as under `run()`.
+- Once settled, the resting scene is marked visited and appended to `history`,
+  and `is_ending` is read from the graph.
+- Events: zero or more `effects_applied` with `phase: "on_enter"` (skipped
+  when a phase's diff is empty, as everywhere), then exactly one
+  `scene_entered`, then `ending_reached` if the resting scene ends the story
+  (a one-scene story is a legal story). **No `choice_made` is emitted — no
+  choice was made.**
+- `UnknownSceneException` if the scene, or any scene redirected to, is not in
+  the graph.
+- It is static: a story that has not begun has no turn machinery yet. No
+  choice is evaluated and no `next` is resolved, so neither a
+  `ConditionEvaluator` nor a `NextSceneResolver` takes any part — the graph
+  and the schema are all it needs.
+- `$turn` is the caller's own counter, as in `run()`. The Engine never reads a
+  clock, and does not care whether an entry is numbered `0` or `1`.
+
 ## `GameState` — the state envelope
 
 ```json
@@ -567,6 +606,9 @@ Event order is fixed: `choice_made`, then zero or one `effects_applied` with
 only when the resting scene is an ending — `ending_reached`. No event carries
 a timestamp; `turn` is the caller's own counter, and the Engine never reads a
 clock.
+
+`Transition::begin()` emits the same sequence from the first `on_enter`
+onwards and never emits `choice_made`, since no choice was made.
 
 ```json
 {

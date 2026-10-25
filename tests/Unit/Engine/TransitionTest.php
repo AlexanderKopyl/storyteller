@@ -587,20 +587,209 @@ final class TransitionTest extends TestCase
     }
 
     /**
+     * M1: a story's opening scene is entered without a choice having been
+     * made, so `run()` cannot reach it and its `on_enter` never ran. The
+     * effects really apply, the scene is really visited and really appears in
+     * `history` — and no `ChoiceMade` is emitted, because no choice was made.
+     */
+    public function testBeginRunsTheOpeningScenesOnEnterAndMarksItVisited(): void
+    {
+        $result = Transition::begin(
+            InMemoryStoryGraph::fromArray([
+                ['key' => 'start', 'on_enter' => [['op' => 'sub', 'var' => 'hp', 'value' => 5], ['op' => 'set_flag', 'flag' => 'woke_up']]],
+            ]),
+            self::schema(),
+            $this->state(),
+            'start',
+            1,
+        );
+
+        self::assertSame('start', $result->sceneKey);
+        self::assertFalse($result->isEnding);
+        self::assertSame(['effects_applied', 'scene_entered'], self::names($result));
+        self::assertSame(
+            [
+                [
+                    'event' => 'effects_applied',
+                    'scene' => 'start',
+                    'phase' => 'on_enter',
+                    'diff' => ['vars' => ['hp' => ['from' => 95, 'to' => 90]], 'flags' => ['added' => ['woke_up']]],
+                    'turn' => 1,
+                ],
+                ['event' => 'scene_entered', 'scene' => 'start', 'redirects' => 0, 'turn' => 1],
+            ],
+            $result->toArray()['events'],
+        );
+        self::assertSame(['start' => 1], $result->state->toArray()['visited']);
+        self::assertSame(['start'], $result->state->toArray()['history']);
+    }
+
+    /**
+     * An opening scene with nothing in its `on_enter` is still entered: the
+     * diff is empty, so no `EffectsApplied`, but the visit and `SceneEntered`
+     * happen exactly as they do for a scene that does something.
+     */
+    public function testBeginOnASceneWithNoOnEnterStillEntersIt(): void
+    {
+        $result = Transition::begin(
+            InMemoryStoryGraph::fromArray([['key' => 'start']]),
+            self::schema(),
+            $this->state(),
+            'start',
+            1,
+        );
+
+        self::assertSame(['scene_entered'], self::names($result));
+        self::assertSame(['start' => 1], $result->state->toArray()['visited']);
+    }
+
+    /**
+     * A `goto` in the opening scene's `on_enter` is allowed and behaves as it
+     * does mid-story: the scene it leaves was transited, not entered, so it
+     * appears in neither `visited` nor `history` — D-VISIT, reached through
+     * `begin()` rather than through `run()`.
+     */
+    public function testBeginFollowsAGotoOutOfTheOpeningScenesOnEnter(): void
+    {
+        $result = Transition::begin(
+            InMemoryStoryGraph::fromArray([
+                ['key' => 'start', 'on_enter' => [['op' => 'set_flag', 'flag' => 'passed'], ['op' => 'goto', 'scene' => 'cave']]],
+                ['key' => 'cave'],
+            ]),
+            self::schema(),
+            $this->state(),
+            'start',
+            1,
+        );
+
+        self::assertSame('cave', $result->sceneKey);
+        self::assertTrue($result->state->hasFlag('passed'));
+        self::assertSame(['cave' => 1], $result->state->toArray()['visited']);
+        self::assertSame(['cave'], $result->state->toArray()['history']);
+        self::assertSame(1, self::sceneEntered($result)['redirects']);
+    }
+
+    /**
+     * The same budget, the same counter, the same exception: five redirects
+     * out of an opening scene settle, the sixth is refused.
+     */
+    public function testBeginSpendsTheSameRedirectBudgetAsARun(): void
+    {
+        $five = Transition::begin(
+            InMemoryStoryGraph::fromArray(self::redirectChain(5)),
+            self::schema(),
+            $this->state(),
+            'h0',
+            1,
+        );
+
+        self::assertSame('h5', $five->sceneKey);
+        self::assertSame(5, self::sceneEntered($five)['redirects']);
+
+        $this->expectException(RedirectLoopException::class);
+        $this->expectExceptionMessage('h6');
+
+        Transition::begin(
+            InMemoryStoryGraph::fromArray(self::redirectChain(6)),
+            self::schema(),
+            $this->state(),
+            'h0',
+            1,
+        );
+    }
+
+    public function testBeginThrowsForAnUnknownOpeningScene(): void
+    {
+        $this->expectException(UnknownSceneException::class);
+        $this->expectExceptionMessage('nowhere');
+
+        Transition::begin(
+            InMemoryStoryGraph::fromArray([['key' => 'start']]),
+            self::schema(),
+            $this->state(),
+            'nowhere',
+            1,
+        );
+    }
+
+    /**
+     * A one-scene story is a legal story, and `is_ending` comes from the graph
+     * in `begin()` exactly as it does in `run()`.
+     */
+    public function testBeginReportsAnEndingOpeningScene(): void
+    {
+        $result = Transition::begin(
+            InMemoryStoryGraph::fromArray([['key' => 'the_end']], ['the_end']),
+            self::schema(),
+            $this->state(),
+            'the_end',
+            3,
+        );
+
+        self::assertTrue($result->isEnding);
+        self::assertSame(['scene_entered', 'ending_reached'], self::names($result));
+        self::assertSame(['event' => 'ending_reached', 'scene' => 'the_end', 'turn' => 3], $result->toArray()['events'][1]);
+    }
+
+    /**
+     * **The reason `begin()` is a factoring and not a second implementation.**
+     *
+     * Entering `x` through a choice and entering `x` through `begin()` must
+     * produce the same state and the same entry events — the redirect chain,
+     * the diff, the visit, the history entry, the ending flag. The only
+     * difference permitted is the `ChoiceMade` the turn emits and the entry
+     * does not, so the comparison is the run's event list with its first
+     * element dropped.
+     *
+     * If the two ever diverge — someone reorders the visit against `on_enter`
+     * in one path only, or forgets `EndingReached` in the other — this fails.
+     */
+    public function testBeginAndTheOnEnterHalfOfRunAgreeExceptForTheChoiceMade(): void
+    {
+        $scenes = [
+            ['key' => 'lobby', 'choices' => [['key' => 'go']], 'next' => 'x'],
+            ['key' => 'x', 'on_enter' => [['op' => 'sub', 'var' => 'hp', 'value' => 1], ['op' => 'goto', 'scene' => 'the_end']]],
+            ['key' => 'the_end', 'on_enter' => [['op' => 'set_flag', 'flag' => 'done']]],
+        ];
+
+        $ran = $this->transition($scenes, ['the_end'])->run($this->state(), 'lobby', 'go', 4);
+        $begun = Transition::begin(
+            InMemoryStoryGraph::fromArray($scenes, ['the_end']),
+            self::schema(),
+            $this->state(),
+            'x',
+            4,
+        );
+
+        self::assertSame($ran->state->toArray(), $begun->state->toArray());
+        self::assertSame($ran->sceneKey, $begun->sceneKey);
+        self::assertSame($ran->isEnding, $begun->isEnding);
+        self::assertSame('choice_made', $ran->events[0]->name());
+        self::assertSame(
+            array_slice($ran->toArray()['events'], 1),
+            $begun->toArray()['events'],
+        );
+    }
+
+    /**
      * @param  list<array<array-key, mixed>> $scenes
      * @param  list<string>                  $endings
      */
     private function transition(array $scenes, array $endings = []): Transition
     {
-        $schema = VariableSchema::of([new VariableDefinition('hp', VariableType::Int, 100)]);
-        $evaluator = new ConditionEvaluator($schema);
+        $evaluator = new ConditionEvaluator(self::schema());
 
         return new Transition(
             InMemoryStoryGraph::fromArray($scenes, $endings),
             $evaluator,
-            new EffectApplier($schema),
+            new EffectApplier(self::schema()),
             new NextSceneResolver($evaluator),
         );
+    }
+
+    private static function schema(): VariableSchema
+    {
+        return VariableSchema::of([new VariableDefinition('hp', VariableType::Int, 100)]);
     }
 
     private function state(): GameState
