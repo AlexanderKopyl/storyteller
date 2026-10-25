@@ -115,11 +115,17 @@ final class NextSceneResolverTest extends TestCase
 
         $state = $this->state();
         $before = $state->toArray();
-        $resolver = $this->resolver();
+        $shared = $this->resolver();
+        $answers = [];
 
-        self::assertSame('ridge', $resolver->resolve($rules, $state, 'crossroads'));
-        self::assertSame('ridge', $resolver->resolve($rules, $state, 'crossroads'));
-        self::assertSame('ridge', $this->resolver()->resolve($rules, $state, 'crossroads'));
+        // Collected rather than asserted one by one: PHPStan proves `resolve()`
+        // pure and reports a second `assertSame` on the same call as always
+        // true, which is a compliment to the design and useless as a test.
+        foreach ([$shared, $shared, $this->resolver()] as $resolver) {
+            $answers[] = $resolver->resolve($rules, $state, 'crossroads');
+        }
+
+        self::assertSame(['ridge', 'ridge', 'ridge'], $answers);
         self::assertSame($before, $state->toArray());
     }
 
