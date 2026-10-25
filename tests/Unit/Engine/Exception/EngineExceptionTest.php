@@ -18,6 +18,7 @@ use Storyteller\Engine\Exception\TypeMismatchException;
 use Storyteller\Engine\Exception\UnknownOperatorException;
 use Storyteller\Engine\Exception\UnknownSceneException;
 use Storyteller\Engine\Exception\UnknownVariableException;
+use Storyteller\Engine\State\VariableType;
 
 /**
  * The Engine's error family is deliberately self-contained (open question OQ-4):
@@ -231,6 +232,12 @@ final class EngineExceptionTest extends TestCase
             ['condition', 'extra'],
         ];
 
+        yield 'MalformedNodeException::duplicateKey' => [
+            static fn (): EngineException => MalformedNodeException::duplicateKey('schema', 'hp'),
+            MalformedNodeException::class,
+            ['schema', 'hp'],
+        ];
+
         yield 'MalformedNodeException::notAPositiveInt' => [
             static fn (): EngineException => MalformedNodeException::notAPositiveInt('condition', 'times'),
             MalformedNodeException::class,
@@ -253,6 +260,18 @@ final class EngineExceptionTest extends TestCase
             static fn (): EngineException => UnknownOperatorException::effect('multiply'),
             UnknownOperatorException::class,
             ['multiply', 'effect'],
+        ];
+
+        yield 'TypeMismatchException::value' => [
+            static fn (): EngineException => TypeMismatchException::value('hp', VariableType::Int, 'float'),
+            TypeMismatchException::class,
+            ['hp', 'int', 'float'],
+        ];
+
+        yield 'TypeMismatchException::notNumeric' => [
+            static fn (): EngineException => TypeMismatchException::notNumeric('name', VariableType::String, 'lt'),
+            TypeMismatchException::class,
+            ['name', 'string', 'lt'],
         ];
 
         yield 'UnknownVariableException::named' => [

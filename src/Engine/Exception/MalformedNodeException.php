@@ -33,6 +33,16 @@ final class MalformedNodeException extends EngineException
         return new self(sprintf('%s: key "%s" is not allowed here.', $path, $key));
     }
 
+    /**
+     * Two entries claiming the same name in a collection keyed by it — a
+     * duplicate variable in a schema, a duplicate choice key in a scene.
+     * Resolving it silently would make the loser invisible to the author.
+     */
+    public static function duplicateKey(string $path, string $key): self
+    {
+        return new self(sprintf('%s: key "%s" is declared more than once.', $path, $key));
+    }
+
     public static function notAPositiveInt(string $path, string $key): self
     {
         return new self(sprintf('%s: key "%s" must be an integer greater than or equal to 1.', $path, $key));
