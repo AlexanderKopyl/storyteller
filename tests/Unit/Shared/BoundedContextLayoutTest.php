@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Storyteller\Tests\Unit\Shared;
 
 use PHPUnit\Framework\Attributes\CoversNothing;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -13,10 +14,24 @@ use SplFileInfo;
 /**
  * Encodes the bounded-context layout itself as an executable assertion.
  *
- * The second test closes - from the test side - the gap deptrac leaves while
- * src/Engine holds no PHP file at all: "Symfony, Doctrine and HTTP types must
- * never appear inside src/Engine" (CLAUDE.md) starts biting the moment the
- * first Engine class lands.
+ * The import scan closes - from the test side - two gaps deptrac leaves open:
+ *
+ *  1. Vendor *functions* are invisible to deptrac. A `use function
+ *     Symfony\Component\String\u;` inside src/Engine produces 0 violations,
+ *     0 uncovered entries and 0 warnings, because the Framework layer's
+ *     `must: classLike` collector rejects a FunctionReference and
+ *     UncoveredDependentHandler only records ClassLikeTokens. Confirmed to be
+ *     a deptrac limitation rather than a configuration mistake (review N2):
+ *     neither a `functionName` collector nor `analyser.types: [class,
+ *     function, function_call]` catches it.
+ *  2. src/Shared is subject to the same no-framework rule as src/Engine -
+ *     plan decision P3 withholds the Framework layer from both, because
+ *     Engine depends on Shared and a framework-contaminated Shared would
+ *     reintroduce exactly the contamination the rule exists to prevent.
+ *
+ * Class, interface, trait, enum, attribute, docblock-type and inline
+ * fully-qualified-name imports are deptrac's job and are deliberately not
+ * duplicated here; `use function` / `use const` are this test's unique value.
  */
 #[CoversNothing]
 final class BoundedContextLayoutTest extends TestCase
@@ -42,14 +57,26 @@ final class BoundedContextLayoutTest extends TestCase
     ];
 
     /**
-     * Namespaces the Engine is forbidden to import, as `use` statements.
+     * Contexts that must stay framework-free (CLAUDE.md; plan decision P3).
      *
      * @var list<string>
      */
-    private const array FORBIDDEN_ENGINE_IMPORTS = [
-        '/^use\s+Symfony\\\\/m',
-        '/^use\s+Doctrine\\\\/m',
-        '/^use\s+Psr\\\\/m',
+    private const array FRAMEWORK_FREE_CONTEXTS = [
+        'src/Engine',
+        'src/Shared',
+    ];
+
+    /**
+     * Vendor roots a framework-free context may never import from.
+     *
+     * @var list<string>
+     */
+    private const array FORBIDDEN_VENDOR_ROOTS = [
+        'Symfony',
+        'Doctrine',
+        'Psr',
+        'Monolog',
+        'PHPUnit',
     ];
 
     public function testEveryBoundedContextDirectoryExists(): void
@@ -62,28 +89,109 @@ final class BoundedContextLayoutTest extends TestCase
         }
     }
 
-    public function testEngineSourcesImportNoFrameworkNamespace(): void
+    #[DataProvider('frameworkFreeContextProvider')]
+    public function testFrameworkFreeContextsImportNoFrameworkNamespace(string $context): void
     {
-        $engineDir = self::projectDir() . '/src/Engine';
+        $contextDir = self::projectDir() . '/' . $context;
 
-        self::assertDirectoryExists($engineDir);
+        self::assertDirectoryExists($contextDir);
 
-        foreach (self::phpFilesIn($engineDir) as $file) {
+        foreach (self::phpFilesIn($contextDir) as $file) {
             $contents = file_get_contents($file);
 
             self::assertIsString($contents, sprintf('Could not read "%s".', $file));
 
-            foreach (self::FORBIDDEN_ENGINE_IMPORTS as $pattern) {
+            foreach (self::forbiddenImportPatterns() as $pattern) {
                 self::assertDoesNotMatchRegularExpression(
                     $pattern,
                     $contents,
                     sprintf(
-                        'The Engine must stay framework-free, but "%s" imports a forbidden namespace.',
+                        '%s must stay framework-free, but "%s" imports a forbidden namespace.',
+                        $context,
                         $file,
                     ),
                 );
             }
         }
+    }
+
+    /**
+     * The regexes themselves are asserted, so the scan above cannot silently
+     * stop matching: a pattern that no longer recognises `use function` would
+     * make this test red instead of making the scan vacuous.
+     */
+    public function testForbiddenImportPatternsMatchTheImportFormsTheyClaimTo(): void
+    {
+        $samples = [
+            'plain class import' => "<?php\n\nuse Symfony\\Component\\HttpFoundation\\Request;\n",
+            'grouped class import' => "<?php\n\nuse Symfony\\Component\\Uid\\{Uuid, Ulid};\n",
+            'doctrine class import' => "<?php\n\nuse Doctrine\\ORM\\EntityManagerInterface;\n",
+            'psr class import' => "<?php\n\nuse Psr\\Log\\LoggerInterface;\n",
+            'function import' => "<?php\n\nuse function Symfony\\Component\\String\\u;\n",
+            'function import, extra spacing' => "<?php\n\nuse  function   Doctrine\\Common\\Util\\thing;\n",
+            'grouped function import' => "<?php\n\nuse function Symfony\\Component\\String\\{u, b};\n",
+            'const import' => "<?php\n\nuse const Monolog\\Level\\DEBUG;\n",
+            'phpunit import' => "<?php\n\nuse PHPUnit\\Framework\\Assert;\n",
+        ];
+
+        foreach ($samples as $label => $source) {
+            $matched = false;
+
+            foreach (self::forbiddenImportPatterns() as $pattern) {
+                if (preg_match($pattern, $source) === 1) {
+                    $matched = true;
+
+                    break;
+                }
+            }
+
+            self::assertTrue($matched, sprintf('No forbidden-import pattern matches the %s sample.', $label));
+        }
+
+        $allowed = [
+            'first-party import' => "<?php\n\nuse Storyteller\\Shared\\StoryId;\n",
+            'php built-in import' => "<?php\n\nuse DateTimeImmutable;\n",
+            'seeded randomizer' => "<?php\n\nuse Random\\Randomizer;\nuse Random\\Engine\\Mt19937;\n",
+            'word boundary, not a vendor root' => "<?php\n\nuse SymfonyLike\\Thing;\n",
+            'mention inside a comment body' => "<?php\n\n// see Symfony\\Component\\Uid for prior art\n",
+        ];
+
+        foreach ($allowed as $label => $source) {
+            foreach (self::forbiddenImportPatterns() as $pattern) {
+                self::assertDoesNotMatchRegularExpression(
+                    $pattern,
+                    $source,
+                    sprintf('Pattern "%s" produces a false positive on the %s sample.', $pattern, $label),
+                );
+            }
+        }
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function frameworkFreeContextProvider(): iterable
+    {
+        foreach (self::FRAMEWORK_FREE_CONTEXTS as $context) {
+            yield $context => [$context];
+        }
+    }
+
+    /**
+     * `use X`, `use function X` and `use const X` for every forbidden vendor
+     * root. The `\b` after the root keeps `SymfonyLike\…` out of scope.
+     *
+     * @return list<string>
+     */
+    private static function forbiddenImportPatterns(): array
+    {
+        $roots = implode('|', self::FORBIDDEN_VENDOR_ROOTS);
+
+        return [
+            sprintf('/^use\s+(?:%s)\b\\\\/m', $roots),
+            sprintf('/^use\s+function\s+(?:%s)\b\\\\/m', $roots),
+            sprintf('/^use\s+const\s+(?:%s)\b\\\\/m', $roots),
+        ];
     }
 
     /**
