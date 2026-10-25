@@ -21,6 +21,9 @@
 | 11. `StoryGraph` / `SceneNode` / `ChoiceNode` + the double | done | `feat(engine): add the StoryGraph contract that Content will implement` (98e07d2) |
 | 12. The four events | done | `feat(engine): add the four engine events and their serialized shapes` (b4dda04) |
 | 13. `Transition` + `TransitionResult` | done | `feat(engine): add Transition with redirect-budget and visit semantics` (8333176) |
+| 14. Determinism and purity guards | done | `test(engine): pin determinism and the purity invariants` (8f1a8db) |
+| 15. `Rng` + `SeededRng` | done | `feat(engine): add the seeded RNG forward contract (unused by design)` (6eb4724) · `Engine: drop the literal Secure engine name from the RNG docblock` (fb22e74) |
+| 16. `docs/engine/ast.md` | not started — separate agent | — |
 
 ## Step log
 
@@ -439,6 +442,97 @@ Two commits, because they are two logical changes.
   the `visited` operator should describe the re-entry rule in terms of *choice conditions and
   `next` guards*, since `on_enter` cannot branch.
 
+### Step 14 — Determinism and purity guards
+
+- **Written:** `tests/Unit/Engine/DeterminismTest.php` and
+  `tests/Unit/Engine/EnginePurityTest.php`. **No production file** — this step adds no
+  behaviour, it makes two prose rules executable.
+- **Tests added (9 methods).** `DeterminismTest` (4): identical inputs through two
+  **independently built** object graphs (two `InMemoryStoryGraph`s, two schemas, two
+  evaluators, two appliers, two resolvers) and two independently built `GameState`s, asserted
+  at four strengths — `assertNotSame`, `assertEquals`, `assertSame` on `toArray()` and
+  `json_encode` byte equality — with the six-event name sequence and **all three
+  `EffectsApplied` diff payloads pinned literally**, so the case cannot pass vacuously; the
+  commutative-effects case, where the same multiset applied in two orders converges on one
+  canonical state and the sorted, de-duplicated flag list is asserted as a *rule*
+  (`['brave', 'wise']`) rather than as agreement; input-state immutability; and condition-order
+  independence. `EnginePurityTest` (5): the source scan, the pattern self-test, the static-property
+  reflection, the final-class reflection, and the source → test-file map.
+- **Commit:** `test(engine): pin determinism and the purity invariants` (`8f1a8db`)
+- **Checks:** `cs-fix` 0 of 81 fixed · `phpstan` `[OK] No errors` · `deptrac` 0/0/0/0/0/0 ·
+  `test` 442 passed (5411 assertions) · `coverage` **100.00 % lines (622/622)**, 43/43
+  classes, 180/180 methods.
+- **Falsification probes — all three run and reverted, none committed.** A guard that cannot
+  fail is worth nothing, so each was made to fail on purpose:
+  1. deleting `sort($flags, SORT_STRING)` from `GameState::canonicalFlags()` made
+     `testDifferentEffectOrderingsReachAnIdenticalState` fail (expected `['wise','brave']`,
+     got `['brave','wise']`);
+  2. injecting `mt_rand(1, 2) + $_SERVER['x']` into `NextSceneResolver` made
+     `testNoEngineSourceUsesANonDeterministicFunction` fail on the
+     `/(?<![\w$>:])mt_rand\s*\(/` pattern;
+  3. adding `public static int $probe` made `testNoEngineClassDeclaresAStaticProperty` fail.
+     The probe had to be placed on `EngineException` (the abstract root): the same edit on a
+     `final readonly` class is a **PHP compile-time fatal**, which is its own, stronger
+     enforcement but is not a test failure. Each file was restored from a copy taken before the
+     edit — no `git checkout`, no reset — and `git status --porcelain src/` re-verified clean.
+- **Scope added beyond the plan's three cases**, at the orchestrator's explicit instruction and
+  additive only: `testTheInputStateIsNotMutatedByARun` (the caller's object is byte-identical
+  after a run, the run is shown to have produced a different object with a different value, and
+  the same instance handed to a second engine yields the same result) and
+  `testEvaluatingAConditionDoesNotDependOnEarlierEvaluations` (the same six conditions walked
+  forwards, backwards, forwards again, and through a freshly built evaluator, all agreeing, with
+  the expected `[true, false, true, false, true, false]` written out so the case cannot pass on
+  an empty list). The plan's third determinism case lives in `GameStateTest` and was landed in
+  step 5, as planned.
+- **Notes.** `DeterminismTest` carries `#[CoversClass]` for `Transition`, `TransitionResult`,
+  `ConditionEvaluator` and `GameState` — the four classes whose determinism it pins (P11).
+  `EnginePurityTest` carries `#[CoversNothing]`, and is the second of the plan's two scanning
+  guards after `BoundedContextLayoutTest`. The impurity regex uses the lookbehind
+  `(?<![\w$>:])` so that `strtotime(`, `$this->date(`, `Formatter::date(`, `$this->update(`
+  and `$clock?->time()` are **not** matched while a fully-qualified `\time()` **is** — a
+  leading backslash is deliberately not excluded, because that is the call being forbidden.
+  The forbidden-function list is a superset of the plan's eight: `srand`, `mt_srand`,
+  `random_bytes`, `array_rand`, `str_shuffle`, `hrtime` and `getdate` were added because they
+  are the same class of defect and cost one array entry each.
+
+### Step 15 — The `Rng` forward contract and `SeededRng`
+
+- **Written:** `tests/Unit/Engine/Random/SeededRngTest.php` **first** (9 cases, 8 errors —
+  `Class "Storyteller\Engine\Random\SeededRng" not found`), then `src/Engine/Random/Rng.php`
+  and `src/Engine/Random/SeededRng.php`.
+- **Tests added:** the plan's nine cases. Same `(seed, turn, index)` always agrees — including
+  when other draws are interleaved between the two, which is what "index-addressed, not
+  sequential" actually means; two instances agree on a whole 16-draw sequence of both
+  `intBetween` and `fraction`; a different turn, a different index and a different seed each
+  produce a different sequence; 200 draws stay inside `[3, 9]` **and** explore more than one
+  value, with `intBetween(t, i, 4, 4) === 4` asserted at every one of them; 200 fractions stay
+  in `[0.0, 1.0)`; `fromInt()` is deterministic and seed-sensitive; and nothing in `src/Engine`
+  references the RNG.
+- **Commits:** `feat(engine): add the seeded RNG forward contract (unused by design)`
+  (`6eb4724`), then `Engine: drop the literal Secure engine name from the RNG docblock`
+  (`fb22e74`) — see *Deviations* 13.
+- **Checks:** `cs-check` `Found 0 of 84 files that can be fixed`, exit 0 · `phpstan`
+  `[OK] No errors` · `deptrac` Violations 0 / Skipped 0 / Uncovered 0 / Allowed 0 / Warnings 0
+  / Errors 0 (`Random\*` produces no entry at all, as the plan predicted) · `test` 451 passed
+  (7566 assertions) · `coverage` **100.00 % lines (630/630)**, 100.00 % classes (44/44),
+  100.00 % methods (185/185). **This is where AC-21 is claimed.**
+- **Notes.** `SeededRng` is `final readonly` with a single `string $seed` property. Each draw
+  derives its own 32-byte engine seed from `hash('sha256', $seed . '|' . $turn . '|' . $index,
+  true)` and runs a **fresh** `Random\Engine\Xoshiro256StarStar` over it, exactly as the plan
+  binds. There is therefore no shared engine to advance and no call ordering that can change an
+  answer. `intBetween()` does not guard `$min <= $max` (the Engine trusts its inputs);
+  `fraction()` uses `Randomizer::getFloat(0.0, 1.0, IntervalBoundary::ClosedOpen)` for the
+  half-open interval. **It is wired into nothing**: no AST node, evaluator, applier, resolver
+  or `Transition` signature changed, and `testNothingInSrcEngineReferencesRng` asserts that
+  twice — a source scan over all 48 Engine files outside `Random/` plus a reflection pass over
+  every Engine method's parameter and return types.
+- **No golden numbers**, per the plan's "property, not a golden number". The consequence is
+  worth stating: the suite proves `SeededRng` is a pure function of `(seed, turn, index)`
+  *within a process*, and cross-process / cross-version reproducibility rests on the
+  construction plus `EnginePurityTest`, which forbids every source of process-local entropy
+  under `src/Engine`. A pinned golden value would be the only thing that would also catch a
+  future PHP changing `Xoshiro256StarStar`'s output. Flagged for the reviewer rather than added.
+
 ## Deviations from the plan
 
 1. **Step 1 — none.** (Unchanged from the original entry: both edge cases the plan anticipated
@@ -489,26 +583,39 @@ Two commits, because they are two logical changes.
    `list<class-string<EngineException>>`, both because PHPUnit's `@phpstan-assert` annotations
    would otherwise let the analyser prove the assertions instead of running them. No
    suppression, no config change.
+12. **Two determinism cases added beyond the plan's three** (step 14) — input-state
+    immutability and condition-evaluation order independence, both at the orchestrator's
+    explicit instruction. Purely additive: no planned case was dropped or weakened, and the
+    plan's third case (`GameStateTest::testStateIsIndependentOfTheOrderWithMethodsAreApplied`)
+    was already landed in step 5. The forbidden-function list in `EnginePurityTest` is likewise
+    a superset of the plan's eight names.
+13. **One extra commit in step 15, fixing forward rather than amending** (`fb22e74`). The
+    plan's step-15 routing note requires that `Random\Engine\Secure` "never appear" under
+    `src/Engine`, so that a grep over the directory is a sufficient check. `6eb4724` named it
+    once, in a docblock, only to say it is never used — which still produced a hit and made the
+    grep ambiguous. The follow-up rewords the sentence; comment-only, no behaviour change.
+    `grep -rn Secure src/` is now empty. History was not rewritten.
 
-## Final check state (after step 13)
+## Final check state (after step 15)
 
 ```
-composer cs-check -> exit 0 (Found 0 of 79 files that can be fixed)
+composer cs-check -> exit 0 (Found 0 of 84 files that can be fixed)
 composer phpstan  -> exit 0 ([OK] No errors; level 8 over src, tests, config, public)
 composer deptrac  -> exit 0 (Violations 0 / Skipped violations 0 / Uncovered 0 / Allowed 0 /
                      Warnings 0 / Errors 0)
-composer test     -> exit 0 (OK, 433 tests, 3227 assertions)
-composer coverage -> exit 0 — src/Engine: Classes 100.00% (43/43), Methods 100.00% (180/180),
-                     Lines 100.00% (622/622); unit suite OK (431 tests, 3221 assertions)
+composer test     -> exit 0 (OK, 451 tests, 7566 assertions)
+composer coverage -> exit 0 — src/Engine: Classes 100.00% (44/44), Methods 100.00% (185/185),
+                     Lines 100.00% (630/630)
 ```
 
 Integrity checks, all clean: `phpstan-baseline.neon` absent · `grep -rn phpstan-ignore src
 tests` → 0 · no `Symfony|Doctrine|Psr|Monolog|PHPUnit` import in `src/Engine` → 0 · no
 `rand|mt_rand|random_int|shuffle|time|microtime|uniqid` call site in `src/Engine` → 0 ·
-no superglobal → 0 · no static property → 0 · `git diff --stat 82e7904..HEAD` (steps 8–13:
-31 files, 3206 insertions, 0 deletions) touches none of `deptrac.yaml`, `phpunit.xml`,
-`phpstan.neon`, `composer.json`, `.php-cs-fixer.dist.php`, `CLAUDE.md`, `Dockerfile`,
-`.claude/**`.
+no superglobal → 0 · no static property → 0 · `grep -rn Secure src` → 0 · the first three are
+now machine-held by `EnginePurityTest` rather than re-run by hand. `git diff --stat
+4bd1269..HEAD` (steps 14–15: 5 files, 1072 insertions, 0 deletions) touches none of
+`deptrac.yaml`, `phpunit.xml`, `phpstan.neon`, `composer.json`, `.php-cs-fixer.dist.php`,
+`CLAUDE.md`, `Dockerfile`, `.claude/**`, `docs/engine/ast.md`.
 
 ## Left for the tester / reviewer
 
@@ -517,10 +624,14 @@ no superglobal → 0 · no static property → 0 · `git diff --stat 82e7904..HE
   absence of an `Engine -> Shared` entry, not the `Allowed` figure. The step-13 probe is the
   positive evidence that the gate bites: a Symfony import in `src/Engine` produced
   `Violations 1` **and** a `BoundedContextLayoutTest` failure.
-- **Steps 14–16 are not implemented**: `DeterminismTest` + `EnginePurityTest` (step 14), the
-  `Rng` contract and `SeededRng` (step 15), and `docs/engine/ast.md` (step 16). The AST spec
-  must document the `visited` operator in terms of choice conditions and `next` guards, not
-  `on_enter` — see deviation 10.
+- **Step 16 is the only one left**: `docs/engine/ast.md`, a separate agent. The AST spec must
+  document the `visited` operator in terms of choice conditions and `next` guards, not
+  `on_enter` — see deviation 10 — and should state that `Rng` exists but no operator uses it.
+- **The RNG has no golden-value test** (step 15, by plan instruction). Within-process purity is
+  proven; cross-version reproducibility of `Xoshiro256StarStar` is not. If that matters, one
+  pinned value is the cheapest way to hold it.
+- **Two extra determinism cases** were added at the orchestrator's instruction (deviation 12),
+  and step 15 took **two** commits rather than one (deviation 13).
 - The 100 % figure is read from `--coverage-text`, not enforced by a flag; `#[CoversClass]` is
   present on every Engine test class, so it means "reached by a test that declares it covers
   that class". The `EngineEvent` and `StoryGraph` interfaces have no executable lines and are
