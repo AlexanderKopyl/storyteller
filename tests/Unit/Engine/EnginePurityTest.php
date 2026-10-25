@@ -54,6 +54,84 @@ final class EnginePurityTest extends TestCase
     ];
 
     /**
+     * Functions whose result depends on the process, the machine or the
+     * environment the code happens to be running in.
+     *
+     * `spl_object_id()` and `spl_object_hash()` are the subtle ones: they are
+     * stable within a process and meaningless across two, so sorting or keying
+     * by them produces a different answer for the same inputs on the next
+     * request — the classic way a "deterministic" engine stops being one.
+     *
+     * @var list<string>
+     */
+    private const array AMBIENT_FUNCTIONS = [
+        'getenv',
+        'putenv',
+        'php_uname',
+        'gethostname',
+        'getmypid',
+        'sys_get_temp_dir',
+        'getcwd',
+        'spl_object_id',
+        'spl_object_hash',
+        'memory_get_usage',
+        'memory_get_peak_usage',
+        'connection_status',
+    ];
+
+    /**
+     * I/O. CLAUDE.md's "framework-free, deterministic, no I/O" is the one
+     * Engine invariant that was held by prose alone: the Engine reads no file,
+     * opens no socket and writes nothing. Content arrives as a decoded array
+     * and state arrives as a `GameState`; whoever read them is not the Engine.
+     *
+     * @var list<string>
+     */
+    private const array IO_FUNCTIONS = [
+        'file_get_contents',
+        'file_put_contents',
+        'fopen',
+        'fread',
+        'fwrite',
+        'fgets',
+        'fputs',
+        'readfile',
+        'file',
+        'file_exists',
+        'is_file',
+        'is_dir',
+        'glob',
+        'scandir',
+        'opendir',
+        'readdir',
+        'mkdir',
+        'rmdir',
+        'unlink',
+        'rename',
+        'copy',
+        'touch',
+        'tempnam',
+        'tmpfile',
+        'fsockopen',
+        'stream_socket_client',
+        'curl_init',
+        'error_log',
+        'syslog',
+    ];
+
+    /**
+     * Types that may not be named anywhere under `src/Engine`, not even in a
+     * docblock, so that a grep over the directory stays a sufficient check
+     * (step 15's rule). `Random\Engine\Secure` draws from the OS CSPRNG and
+     * cannot be seeded, so a single use would make a saved game unreplayable.
+     *
+     * @var list<string>
+     */
+    private const array FORBIDDEN_TYPES = [
+        'Random\\Engine\\Secure',
+    ];
+
+    /**
      * @var list<string>
      */
     private const array SUPERGLOBALS = [
@@ -124,7 +202,8 @@ final class EnginePurityTest extends TestCase
                     $pattern,
                     $contents,
                     sprintf(
-                        'src/Engine must stay deterministic, but "%s" uses %s. Inject a seed or a clock instead.',
+                        'src/Engine must stay deterministic and do no I/O, but "%s" uses %s. '
+                        . 'Inject a seed or a clock, or have the caller read it and pass it in.',
                         $file,
                         $label,
                     ),
@@ -149,6 +228,18 @@ final class EnginePurityTest extends TestCase
             'callable string' => "<?php\n\n\$f = 'microtime';\n\$x = \$f();\n",
             'superglobal read' => "<?php\n\n\$x = \$_SERVER['HTTP_HOST'];\n",
             'globals read' => "<?php\n\n\$x = \$GLOBALS['config'];\n",
+            'environment read' => "<?php\n\n\$x = getenv('APP_ENV');\n",
+            'process identity' => "<?php\n\n\$x = getmypid();\n",
+            'object identity' => "<?php\n\n\$key = spl_object_id(\$node);\n",
+            'object hash' => "<?php\n\n\$key = spl_object_hash(\$node);\n",
+            'machine identity' => "<?php\n\n\$x = php_uname('n');\n",
+            'reading a file' => "<?php\n\n\$yaml = file_get_contents(\$path);\n",
+            'opening a file' => "<?php\n\n\$h = fopen(\$path, 'rb');\n",
+            'listing files' => "<?php\n\n\$files = glob(\$dir . '/*.yaml');\n",
+            'writing a log' => "<?php\n\nerror_log('here');\n",
+            'opening a socket' => "<?php\n\n\$s = fsockopen(\$host, 80);\n",
+            'the unseedable engine, imported' => "<?php\n\nuse Random\\Engine\\Secure;\n",
+            'the unseedable engine, merely mentioned' => "<?php\n\n// never Random\\Engine\\Secure, which cannot be seeded\n",
         ];
 
         foreach ($impure as $label => $source) {
@@ -168,6 +259,11 @@ final class EnginePurityTest extends TestCase
             'an injected randomizer' => "<?php\n\n\$x = \$this->randomizer->getInt(1, 6);\n",
             'a variable whose name contains a forbidden name' => "<?php\n\n\$runtime = 1;\n\$_seed = 2;\n",
             'a seeded engine import' => "<?php\n\nuse Random\\Engine\\Xoshiro256StarStar;\n",
+            'a method whose name is an I/O function' => "<?php\n\n\$x = \$this->glob(\$pattern);\n",
+            'a method whose name is an ambient function' => "<?php\n\n\$x = \$config->getenv('APP_ENV');\n",
+            'a longer function ending in an I/O name' => "<?php\n\n\$x = unserialize_file(\$path);\n",
+            'a property whose name contains an I/O name' => "<?php\n\n\$x = \$this->fileExists;\n",
+            'a word containing a forbidden type name' => "<?php\n\n\$x = SecureHash::of(\$s);\n",
         ];
 
         foreach ($pure as $label => $source) {
@@ -267,7 +363,13 @@ final class EnginePurityTest extends TestCase
     {
         $patterns = [];
 
-        foreach (self::NON_DETERMINISTIC_FUNCTIONS as $function) {
+        $functions = [
+            ...self::NON_DETERMINISTIC_FUNCTIONS,
+            ...self::AMBIENT_FUNCTIONS,
+            ...self::IO_FUNCTIONS,
+        ];
+
+        foreach ($functions as $function) {
             $patterns[$function . '()'] = sprintf('/(?<![\w$>:])%s\s*\(/', preg_quote($function, '/'));
             $patterns[sprintf("'%s' as a callable string", $function)] = sprintf(
                 '/([\'"])%s\1/',
@@ -277,6 +379,12 @@ final class EnginePurityTest extends TestCase
 
         foreach (self::SUPERGLOBALS as $superglobal) {
             $patterns['$' . $superglobal] = sprintf('/\$%s\b/', preg_quote($superglobal, '/'));
+        }
+
+        foreach (self::FORBIDDEN_TYPES as $type) {
+            // Named anywhere at all, import or docblock: the rule is that a
+            // grep for the name over src/Engine comes back empty.
+            $patterns['the type ' . $type] = sprintf('/%s/', preg_quote($type, '/'));
         }
 
         return $patterns;

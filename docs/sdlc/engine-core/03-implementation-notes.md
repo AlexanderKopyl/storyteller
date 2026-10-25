@@ -1200,3 +1200,34 @@ One used, one removed, seven justified in a line each at their declaration.
   scene is named, and the table row covers `begin()` as well as `run()`.
 - **Checks:** cs-check 0 of 87 · phpstan `[OK] No errors` · test `OK (563 tests, 8014 assertions)`.
 - **Commit:** `fix(engine): name the refused redirect, not the scene never reached`
+
+### F8 — the purity scan now covers the environment, object identity and I/O (m4, minor)
+
+- **Changed.** `tests/Unit/Engine/EnginePurityTest.php` only (no `src/` change). Two new
+  constants beside `NON_DETERMINISTIC_FUNCTIONS`, kept separate because they are separate
+  rules: `AMBIENT_FUNCTIONS` (12 — `getenv`, `putenv`, `php_uname`, `gethostname`,
+  `getmypid`, `sys_get_temp_dir`, `getcwd`, `spl_object_id`, `spl_object_hash`,
+  `memory_get_usage`, `memory_get_peak_usage`, `connection_status`) and `IO_FUNCTIONS` (29 —
+  `file_get_contents` through `curl_init`, plus `error_log` and `syslog`), which is
+  CLAUDE.md's "no I/O" rule, until now held by prose alone. A third, `FORBIDDEN_TYPES`,
+  carries `Random\Engine\Secure` and is matched **anywhere in the file, including a
+  docblock**, which is what keeps step 15's "a grep over the directory is a sufficient check"
+  true.
+- **`spl_object_id`/`spl_object_hash` are the subtle ones** and the reason the review named
+  them: stable within a process, meaningless across two, so sorting or keying by one gives a
+  different answer for the same inputs on the next request.
+- **Samples.** 13 new positive samples (one per new call form, including both an import of
+  and a bare mention of the forbidden type) and 5 new negatives — `$this->glob(...)`,
+  `$config->getenv(...)`, `unserialize_file(...)`, `$this->fileExists`, `SecureHash::of(...)`
+  — so the new patterns cannot go vacuous and cannot fire on a method, a property or a longer
+  name.
+- **The failure message was wrong for the new rules** ("Inject a seed or a clock instead" for
+  a `file_get_contents`); it now names both halves of the rule and the real remedy.
+- **Falsified, six probes, each applied to `src/Engine/Transition.php` by file copy and
+  reverted the same way:** `getenv()`, `spl_object_id()`, `file_get_contents()`, `glob()`,
+  `fopen()` and a `use Random\Engine\Secure;` import. Each produced exactly one failure
+  naming the file and the rule. `git status src/` clean afterwards.
+- **Checks:** cs-check 0 of 87 · phpstan `[OK] No errors` · test `OK (563 tests, 12181
+  assertions)` — the assertion count jumps because the scan asserts once per pattern per
+  Engine file.
+- **Commit:** `test(engine): forbid the environment, object identity and I/O`
